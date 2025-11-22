@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../utils/db');
 
+// GET /api/lookups?category=TYPE_OF_BUSINESS
 router.get('/', async (req, res) => {
   try {
     const { category } = req.query;
