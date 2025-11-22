@@ -8,6 +8,7 @@ import api from '../services/api';
 function Placement() {
   const [activeTab, setActiveTab] = useState('policies');
   const [clients, setClients] = useState([]);
+  const [proposals, setProposals] = useState([]);
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -87,6 +88,27 @@ function Placement() {
   };
 
   // === Helpers ===
+  const markProposalStatus = async (id, status) => {
+    try {
+      await api.patch(`/placement/proposals/${id}/status`, { status });
+      await loadProposals();
+    } catch (err) {
+      setError('❌ Error update proposal: ' + (err.response?.data?.error?.message || err.message));
+    }
+  };
+
+  const convertProposalToPolicy = async (proposal) => {
+    try {
+      const res = await api.post(`/placement/proposals/${proposal.id}/convert-to-policy`);
+      if (res.data.success) {
+        setSuccess('✅ Proposal converted to Policy');
+        await loadPolicies();
+        setActiveTab('policies');
+      }
+    } catch (err) {
+      setError('❌ Error convert proposal: ' + (err.response?.data?.error?.message || err.message));
+    }
+  };
 
   // Generate transaction number
   const generateTransactionNumber = () => {
@@ -216,6 +238,25 @@ function Placement() {
     const net = gross_val - source_val;
     return net.toFixed(2);
   };
+
+  // Initial data load
+  useEffect(() => {
+  loadClients();
+  loadPolicies();
+  loadProposals();
+  }, []);
+
+  const loadProposals = async () => {
+    try {
+      const res = await api.get('/placement/proposals');
+      if (res.data.success) {
+        setProposals(res.data.data);
+      }
+    } catch (err) {
+      console.error('Error loading proposals:', err);
+    }
+  };
+
 
   // === Form state ===
 
@@ -788,6 +829,14 @@ function Placement() {
         </li>
         <li className="nav-item">
           <button
+            className={`nav-link ${activeTab === 'proposals' ? 'active' : ''}`}
+            onClick={() => setActiveTab('proposals')}
+          >
+            📑 Proposals
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
             className={`nav-link ${activeTab === 'policies' ? 'active' : ''}`}
             onClick={() => setActiveTab('policies')}
           >
@@ -795,6 +844,7 @@ function Placement() {
           </button>
         </li>
       </ul>
+
 
       {/* === CLIENTS TAB === */}
       {activeTab === 'clients' && (
@@ -896,7 +946,88 @@ function Placement() {
           )}
         </div>
       )}
+      {/* === PROPOSALS TAB === */}
+      {activeTab === 'proposals' && (
+        <div>
+          <button
+            className="btn btn-primary mb-3"
+            onClick={() => {
+              // buka modal proposal baru (bisa mirip Policy modal tapi lebih simple)
+              // untuk sementara kamu bisa pakai form sederhana
+            }}
+          >
+            ➕ Add Proposal
+          </button>
 
+          <div className="table-responsive">
+            <table className="table table-hover table-sm">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Business</th>
+                  <th>Client</th>
+                  <th>Source</th>
+                  <th>Class</th>
+                  <th>Product</th>
+                  <th>Sales</th>
+                  <th>Request Date</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proposals.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.id}</td>
+                    <td>{p.type_of_case}</td>
+                    <td>{p.type_of_business}</td>
+                    <td>{p.client_name}</td>
+                    <td>{p.source_business_name}</td>
+                    <td>{p.class_of_business_name}</td>
+                    <td>{p.product_name}</td>
+                    <td>{p.sales_team_name}</td>
+                    <td>{p.request_date}</td>
+                    <td>
+                      <span className="badge bg-secondary">{p.status}</span>
+                    </td>
+                    <td>
+                      <div className="btn-group btn-group-sm">
+                        {/* tombol mark as Won / Lost */}
+                        <button
+                          className="btn btn-outline-success"
+                          disabled={p.status === 'Won'}
+                          onClick={() => markProposalStatus(p.id, 'Won')}
+                        >
+                          ✅ Win
+                        </button>
+                        <button
+                          className="btn btn-outline-danger"
+                          disabled={p.status === 'Lost'}
+                          onClick={() => markProposalStatus(p.id, 'Lost')}
+                        >
+                          ❌ Lose
+                        </button>
+                        <button
+                          className="btn btn-primary"
+                          disabled={p.status !== 'Won'}
+                          onClick={() => convertProposalToPolicy(p)}
+                        >
+                          🔁 To Policy
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {proposals.length === 0 && (
+            <div className="alert alert-info">📭 No proposals found</div>
+          )}
+        </div>
+      )}
       {/* === POLICIES TAB === */}
       {activeTab === 'policies' && (
         <div>

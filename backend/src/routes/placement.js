@@ -433,4 +433,183 @@ router.patch('/policies/:id/sent-to-finance', async (req, res) => {
   }
 });
 
+// ===== PROPOSALS =====
+router.get('/proposals', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT p.*,
+              c.name  AS client_name,
+              sb.name AS source_business_name
+       FROM proposals p
+       LEFT JOIN clients c  ON c.id  = p.client_id
+       LEFT JOIN source_business sb ON sb.id = p.source_business_id
+       ORDER BY p.created_at DESC`
+    );
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+  } catch (err) {
+    console.error('Error load proposals', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message }
+    });
+  }
+});
+
+router.post('/proposals', async (req, res) => {
+  try {
+    const {
+      type_of_case,
+      type_of_business,
+      client_id,
+      source_business_id,
+      class_of_business_name,
+      product_name,
+      sales_team_name,
+      request_date
+    } = req.body;
+
+    if (!type_of_case || !type_of_business || !client_id || !class_of_business_name || !request_date) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Missing required fields' }
+      });
+    }
+
+    const result = await db.query(
+      `INSERT INTO proposals
+       (type_of_case, type_of_business, client_id, source_business_id,
+        class_of_business_name, product_name, sales_team_name, request_date)
+       VALUES
+       ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [
+        type_of_case,
+        type_of_business,
+        client_id,
+        source_business_id || null,
+        class_of_business_name,
+        product_name || null,
+        sales_team_name || null,
+        request_date
+      ]
+    );
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('Error create proposal', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message }
+    });
+  }
+});
+
+router.patch('/proposals/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // 'Open' | 'Won' | 'Lost'
+
+    if (!['Open','Won','Lost'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Invalid status' }
+      });
+    }
+
+    const result = await db.query(
+      `UPDATE proposals
+       SET status = $1,
+           updated_at = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [status, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Proposal not found' }
+      });
+    }
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('Error update proposal status', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message }
+    });
+  }
+});
+router.post('/proposals/:id/convert-to-policy', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // 1) Ambil proposal
+    const propRes = await db.query(
+      `SELECT * FROM proposals WHERE id = $1`,
+      [id]
+    );
+    if (propRes.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Proposal not found' }
+      });
+    }
+
+    const prop = propRes.rows[0];
+    if (prop.status !== 'Won') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Only Won proposals can be converted' }
+      });
+    }
+
+    // 2) Build policy minimal dari proposal
+    // premium, commission, dates bisa null dulu → nanti diisi via edit Policy
+    const trx = `TRX-${Date.now()}`; // optional: atau pakai generator kamu sendiri
+
+    const polRes = await db.query(
+      `INSERT INTO policies
+       (transaction_number,
+        type_of_case,
+        type_of_business,
+        client_id,
+        source_business_id,
+        class_of_business_name,
+        product_name,
+        request_date)
+       VALUES
+       ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [
+        trx,
+        prop.type_of_case,
+        prop.type_of_business,
+        prop.client_id,
+        prop.source_business_id,
+        prop.class_of_business_name,
+        prop.product_name,
+        prop.request_date
+      ]
+    );
+
+    const policy = polRes.rows[0];
+
+    res.status(201).json({ success: true, data: policy });
+  } catch (err) {
+    console.error('Error convert proposal to policy', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message }
+    });
+  }
+});
+
+
+
 module.exports = router;
