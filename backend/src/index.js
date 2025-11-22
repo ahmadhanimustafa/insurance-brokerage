@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const { query } = require('./utils/db');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -12,9 +11,6 @@ app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(morgan('combined'));
 app.use(express.json());
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// DB ping
-query('SELECT 1').then(() => console.log('✅ PostgreSQL connected')).catch(err => console.error('❌ PG connection error', err));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -55,7 +51,6 @@ app.listen(PORT, () => {
   console.log(`   - /api/placement/*`);
   console.log(`   - /api/finance/*`);
   console.log(`   - /api/endorsement/*`);
-  console.log(`   - /api/lookups/*`);
 });
 
 module.exports = app;

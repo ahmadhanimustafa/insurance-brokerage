@@ -1,205 +1,255 @@
+// backend/src/routes/finance.js
+// Finance module - in-memory schedules with installment-level entries
+// Status codes: NOT_DUE, DUE, PARTIAL_PAID, PAID
+// Descriptions: Premium (From Client), Premium to Insurer, Commission In, Commission to Source
+
 const express = require('express');
 const router = express.Router();
-const db = require('../utils/db');
 
-function normalizeBusinessType(type) {
-  if (!type) return 'DIRECT';
-  const v = String(type).toLowerCase().trim();
-  if (v === 'non direct' || v === 'non_direct' || v === 'non-direct') {
+// ===============================
+// In-memory storage
+// ===============================
+
+let schedules = [];
+let nextScheduleId = 1;
+
+// ===============================
+// Constants & helpers
+// ===============================
+
+const VALID_DESCRIPTIONS = [
+  'Premium (From Client)',
+  'Premium to Insurer',
+  'Commission In',
+  'Commission to Source'
+];
+
+const VALID_STATUSES = ['NOT_DUE', 'DUE', 'PARTIAL_PAID', 'PAID'];
+
+function normalizeStatus(status) {
+  if (!status) return 'NOT_DUE';
+  const upper = String(status).toUpperCase();
+  if (VALID_STATUSES.includes(upper)) return upper;
+  return 'NOT_DUE';
+}
+
+function normalizeBusinessType(typeOfBusiness) {
+  if (!typeOfBusiness) return 'DIRECT';
+  const val = String(typeOfBusiness).toLowerCase().trim();
+  if (val === 'non direct' || val === 'non_direct' || val === 'non-direct') {
     return 'NON_DIRECT';
   }
   return 'DIRECT';
 }
 
-function buildSummary(installments) {
-  const summary = {
-    premium_total: 0,
-    premium_received: 0,
-    premium_outstanding: 0,
-
-    premium_to_insurer_total: 0,
-    premium_to_insurer_paid: 0,
-    premium_to_insurer_outstanding: 0,
-
-    commission_in_total: 0,
-    commission_in_received: 0,
-    commission_in_outstanding: 0,
-
-    commission_to_source_total: 0,
-    commission_to_source_paid: 0,
-    commission_to_source_outstanding: 0,
-
-    next_due_date: null,
-    insurer_next_due_date: null
-  };
-
-  const today = new Date().toISOString().slice(0, 10);
-
-  for (const inst of installments) {
-    for (const entry of inst.entries || []) {
-      const desc = entry.description;
-      const amt = Number(entry.amount || 0);
-      const status = entry.status || 'NOT_DUE';
-      const due = entry.due_date;
-
-      let isPaid =
-        status === 'PAID'; // PARTIAL_PAID kita treat masih ada outstanding
-
-      if (desc === 'Premium (From Client)') {
-        summary.premium_total += amt;
-        if (isPaid) summary.premium_received += amt;
-      } else if (desc === 'Premium to Insurer') {
-        summary.premium_to_insurer_total += amt;
-        if (isPaid) summary.premium_to_insurer_paid += amt;
-      } else if (desc === 'Commission In') {
-        summary.commission_in_total += amt;
-        if (isPaid) summary.commission_in_received += amt;
-      } else if (desc === 'Commission to Source') {
-        summary.commission_to_source_total += amt;
-        if (isPaid) summary.commission_to_source_paid += amt;
-      }
-
-      if (due && !isPaid) {
-        if (!summary.next_due_date || due < summary.next_due_date) {
-          summary.next_due_date = due;
-        }
-        if (desc === 'Premium to Insurer') {
-          if (
-            !summary.insurer_next_due_date ||
-            due < summary.insurer_next_due_date
-          ) {
-            summary.insurer_next_due_date = due;
-          }
-        }
-      }
-    }
-  }
-
-  summary.premium_outstanding =
-    summary.premium_total - summary.premium_received;
-  summary.premium_to_insurer_outstanding =
-    summary.premium_to_insurer_total - summary.premium_to_insurer_paid;
-  summary.commission_in_outstanding =
-    summary.commission_in_total - summary.commission_in_received;
-  summary.commission_to_source_outstanding =
-    summary.commission_to_source_total - summary.commission_to_source_paid;
-
-  return summary;
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-async function loadSchedulesWithChildren() {
-  const schedRes = await db.query(
-    `SELECT fs.*,
-            p.transaction_number,
-            p.policy_number,
-            p.placing_number,
-            p.quotation_number,
-            p.type_of_business,
-            p.currency AS policy_currency
-     FROM finance_schedules fs
-     JOIN policies p ON p.id = fs.policy_id
-     ORDER BY fs.created_at DESC`,
-    []
-  );
+function compareDateStr(a, b) {
+  // date string in YYYY-MM-DD
+  if (!a) return 1;
+  if (!b) return -1;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
 
-  const scheduleIds = schedRes.rows.map((r) => r.id);
-  if (!scheduleIds.length) return [];
+// Build sanitized installments from request body.
+// Expect body.installments in shape:
+// [ { installment, entries: [ { description, due_date, amount, status, paid_date }, ... ] }, ... ]
+function buildInstallmentsFromBody(body, typeOfBusiness) {
+  const installmentsRaw = Array.isArray(body.installments) ? body.installments : [];
+  const normalizedType = normalizeBusinessType(typeOfBusiness);
 
-  const instRes = await db.query(
-    `SELECT fi.*
-     FROM finance_installments fi
-     WHERE fi.schedule_id = ANY($1::int[])
-     ORDER BY fi.schedule_id, fi.installment_number`,
-    [scheduleIds]
-  );
-
-  const instIds = instRes.rows.map((r) => r.id);
-  let entriesRes = { rows: [] };
-  if (instIds.length) {
-    entriesRes = await db.query(
-      `SELECT fe.*
-       FROM finance_entries fe
-       WHERE fe.installment_id = ANY($1::int[])
-       ORDER BY fe.installment_id, fe.id`,
-      [instIds]
-    );
+  // If no installments passed, we just return empty array.
+  if (!installmentsRaw.length) {
+    return [];
   }
 
-  const instBySchedule = {};
-  for (const inst of instRes.rows) {
-    if (!instBySchedule[inst.schedule_id]) {
-      instBySchedule[inst.schedule_id] = [];
-    }
-    instBySchedule[inst.schedule_id].push({
-      installment: inst.installment_number,
-      installment_id: inst.id,
-      entries: []
-    });
-  }
+  // For NON_DIRECT, we ignore Premium entries if frontend accidentally sends them.
+  const isNonDirect = normalizedType === 'NON_DIRECT';
 
-  const entriesByInstallment = {};
-  for (const e of entriesRes.rows) {
-    if (!entriesByInstallment[e.installment_id]) {
-      entriesByInstallment[e.installment_id] = [];
-    }
-    entriesByInstallment[e.installment_id].push({
-      description: e.description,
-      due_date: e.due_date ? e.due_date.toISOString().slice(0, 10) : null,
-      amount: Number(e.amount || 0),
-      status: e.status || 'NOT_DUE',
-      paid_date: e.paid_date ? e.paid_date.toISOString().slice(0, 10) : null
-    });
-  }
+  const sanitized = installmentsRaw.map((instRaw, idx) => {
+    const installmentNumber =
+      instRaw.installment != null ? Number(instRaw.installment) : idx + 1;
 
-  for (const schedId of Object.keys(instBySchedule)) {
-    for (const inst of instBySchedule[schedId]) {
-      inst.entries = entriesByInstallment[inst.installment_id] || [];
-    }
-  }
+    const entriesRaw = Array.isArray(instRaw.entries) ? instRaw.entries : [];
 
-  const schedules = schedRes.rows.map((s) => {
-    const installments = instBySchedule[s.id] || [];
-    const summary = buildSummary(installments);
+    // Filter & sanitize entries
+    const entries = entriesRaw
+      .map((entry) => {
+        const desc = String(entry.description || '').trim();
+
+        // Enforce description set:
+        if (!VALID_DESCRIPTIONS.includes(desc)) {
+          return null;
+        }
+
+        // For NON_DIRECT, keep only Commission In & Commission to Source
+        if (
+          isNonDirect &&
+          (desc === 'Premium (From Client)' || desc === 'Premium to Insurer')
+        ) {
+          return null;
+        }
+
+        const amountNum = Number(entry.amount || 0);
+
+        return {
+          description: desc,
+          due_date: entry.due_date || null, // YYYY-MM-DD
+          amount: isNaN(amountNum) ? 0 : amountNum,
+          status: normalizeStatus(entry.status),
+          paid_date: entry.paid_date || null
+        };
+      })
+      .filter(Boolean);
 
     return {
-      id: s.id,
-      policy_id: s.policy_id,
-      client_id: s.client_id,
-      insurance_id: s.insurance_id,
-      source_business_id: s.source_business_id,
-      currency: s.currency || s.policy_currency || 'IDR',
-      type_of_business: normalizeBusinessType(s.type_of_business || s.type_of_business),
-      commission_gross: Number(s.commission_gross || 0),
-      commission_to_source: Number(s.commission_to_source || 0),
-      transaction_number: s.transaction_number,
-      policy_number: s.policy_number,
-      placing_number: s.placing_number,
-      quotation_number: s.quotation_number,
-      installments,
-      summary
+      installment: installmentNumber,
+      entries
     };
   });
 
-  return schedules;
+  return sanitized;
 }
 
-// GET /api/finance/schedules
-router.get('/schedules', async (req, res) => {
-  try {
-    const schedules = await loadSchedulesWithChildren();
-    res.json({ success: true, data: schedules });
-  } catch (err) {
-    console.error('Error get finance schedules', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: err.message }
-    });
+// Compute summary metrics from installments.
+// We do NOT mutate original schedule; we return a new object with .summary injected.
+function computeSummary(schedule) {
+  const installments = Array.isArray(schedule.installments)
+    ? schedule.installments
+    : [];
+
+  let premiumTotal = 0;
+  let premiumReceived = 0;
+
+  let premiumToInsurerTotal = 0;
+  let premiumToInsurerPaid = 0;
+
+  let commInTotal = 0;
+  let commInReceived = 0;
+
+  let commToSourceTotal = 0;
+  let commToSourcePaid = 0;
+
+  let nextDueDate = null;
+  let insurerNextDueDate = null;
+
+  const today = todayISO();
+
+  for (const inst of installments) {
+    const entries = Array.isArray(inst.entries) ? inst.entries : [];
+    for (const entry of entries) {
+      const desc = entry.description;
+      const amount = Number(entry.amount || 0);
+      const status = normalizeStatus(entry.status);
+      const dueDate = entry.due_date || null;
+
+      // Aggregate amounts by description
+      switch (desc) {
+        case 'Premium (From Client)':
+          premiumTotal += amount;
+          if (status === 'PAID') {
+            premiumReceived += amount;
+          }
+          break;
+        case 'Premium to Insurer':
+          premiumToInsurerTotal += amount;
+          if (status === 'PAID') {
+            premiumToInsurerPaid += amount;
+          }
+          break;
+        case 'Commission In':
+          commInTotal += amount;
+          if (status === 'PAID') {
+            commInReceived += amount;
+          }
+          break;
+        case 'Commission to Source':
+          commToSourceTotal += amount;
+          if (status === 'PAID') {
+            commToSourcePaid += amount;
+          }
+          break;
+        default:
+          break;
+      }
+
+      // Next due date (any entry)
+      if (dueDate && status !== 'PAID') {
+        if (!nextDueDate || compareDateStr(dueDate, nextDueDate) < 0) {
+          nextDueDate = dueDate;
+        }
+      }
+
+      // Next insurer due date (only Premium to Insurer)
+      if (desc === 'Premium to Insurer' && dueDate && status !== 'PAID') {
+        if (
+          !insurerNextDueDate ||
+          compareDateStr(dueDate, insurerNextDueDate) < 0
+        ) {
+          insurerNextDueDate = dueDate;
+        }
+      }
+
+      // Auto mark DUE if overdue but still NOT_DUE logically (for reporting),
+      // but we don't mutate stored status here. Frontend can use summary dates
+      // to highlight overdue entries if needed.
+      if (dueDate && compareDateStr(dueDate, today) < 0 && status === 'NOT_DUE') {
+        // we don't change entry.status, just note that nextDueDate is in the past
+        // Actual visual 'overdue' can be determined by frontend via dueDate < today.
+      }
+    }
   }
+
+  const premiumOutstanding = premiumTotal - premiumReceived;
+  const premiumToInsurerOutstanding =
+    premiumToInsurerTotal - premiumToInsurerPaid;
+
+  const commInOutstanding = commInTotal - commInReceived;
+  const commToSourceOutstanding = commToSourceTotal - commToSourcePaid;
+
+  return {
+    ...schedule,
+    summary: {
+      premium_total: premiumTotal,
+      premium_received: premiumReceived,
+      premium_outstanding: premiumOutstanding,
+
+      premium_to_insurer_total: premiumToInsurerTotal,
+      premium_to_insurer_paid: premiumToInsurerPaid,
+      premium_to_insurer_outstanding: premiumToInsurerOutstanding,
+
+      commission_in_total: commInTotal,
+      commission_in_received: commInReceived,
+      commission_in_outstanding: commInOutstanding,
+
+      commission_to_source_total: commToSourceTotal,
+      commission_to_source_paid: commToSourcePaid,
+      commission_to_source_outstanding: commToSourceOutstanding,
+
+      next_due_date: nextDueDate,
+      insurer_next_due_date: insurerNextDueDate
+    }
+  };
+}
+
+// ===============================
+// Routes
+// ===============================
+
+// GET all schedules (with summary)
+router.get('/schedules', (req, res) => {
+  const enriched = schedules.map((s) => computeSummary(s));
+  res.json({
+    success: true,
+    data: enriched
+  });
 });
 
-// POST /api/finance/schedules
-router.post('/schedules', async (req, res) => {
-  const client = await db.pool.connect();
+// POST create schedule
+router.post('/schedules', (req, res) => {
   try {
     const {
       policy_id,
@@ -207,174 +257,136 @@ router.post('/schedules', async (req, res) => {
       insurance_id,
       source_business_id,
       currency,
-      type_of_business,
+      type_of_business, // "Direct" / "Non Direct" from frontend
       commission_gross,
-      commission_to_source,
-      installments
+      commission_to_source
     } = req.body;
 
-    if (!policy_id || !Array.isArray(installments) || !installments.length) {
+    if (!policy_id) {
       return res.status(400).json({
         success: false,
-        error: { code: 'VALIDATION', message: 'policy_id and installments are required' }
+        error: { code: 'VALIDATION', message: 'policy_id is required' }
       });
     }
 
-    await client.query('BEGIN');
-
-    const schedRes = await client.query(
-      `INSERT INTO finance_schedules
-       (policy_id, client_id, insurance_id, source_business_id,
-        currency, type_of_business, commission_gross, commission_to_source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING *`,
-      [
-        policy_id,
-        client_id || null,
-        insurance_id || null,
-        source_business_id || null,
-        currency || 'IDR',
-        type_of_business || 'DIRECT',
-        commission_gross || 0,
-        commission_to_source || 0
-      ]
-    );
-
-    const schedule = schedRes.rows[0];
-    const scheduleId = schedule.id;
-
-    for (const inst of installments) {
-      const instRes = await client.query(
-        `INSERT INTO finance_installments
-         (schedule_id, installment_number)
-         VALUES ($1,$2)
-         RETURNING id`,
-        [scheduleId, inst.installment]
-      );
-      const installmentId = instRes.rows[0].id;
-
-      for (const entry of inst.entries || []) {
-        await client.query(
-          `INSERT INTO finance_entries
-           (installment_id, description, due_date, amount, status, paid_date)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [
-            installmentId,
-            entry.description,
-            entry.due_date || null,
-            entry.amount || 0,
-            entry.status || 'NOT_DUE',
-            entry.paid_date || null
-          ]
-        );
-      }
+    // Optional: Prevent duplicate schedule for same policy
+    const existing = schedules.find((s) => s.policy_id === policy_id);
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'DUPLICATE',
+          message: 'Finance schedule already exists for this policy'
+        }
+      });
     }
 
-    await client.query('COMMIT');
+    const normalizedType = normalizeBusinessType(type_of_business);
+    const installments = buildInstallmentsFromBody(
+      req.body,
+      normalizedType
+    );
 
-    const schedules = await loadSchedulesWithChildren();
-    const created = schedules.find((s) => s.id === scheduleId);
-    res.status(201).json({ success: true, data: created });
-  } catch (err) {
-    await db.pool.query('ROLLBACK');
-    console.error('Error create finance schedule', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: err.message }
+    const now = new Date();
+
+    const schedule = {
+      id: nextScheduleId++,
+      policy_id,
+      client_id: client_id || null,
+      insurance_id: insurance_id || null,
+      source_business_id: source_business_id || null,
+      currency: currency || 'IDR',
+
+      type_of_business: normalizedType, // DIRECT / NON_DIRECT
+
+      commission_gross: commission_gross != null ? Number(commission_gross) : null,
+      commission_to_source:
+        commission_to_source != null ? Number(commission_to_source) : null,
+
+      installments,
+
+      created_at: now,
+      updated_at: now
+    };
+
+    schedules.push(schedule);
+
+    const enriched = computeSummary(schedule);
+
+    res.status(201).json({
+      success: true,
+      data: enriched
     });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Error creating finance schedule:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: err.message || 'Failed to create finance schedule'
+      }
+    });
   }
 });
 
-// PUT /api/finance/schedules/:id
-router.put('/schedules/:id', async (req, res) => {
-  const client = await db.pool.connect();
+// PUT update schedule (including installments)
+router.put('/schedules/:id', (req, res) => {
   try {
-    const scheduleId = Number(req.params.id);
-    if (!scheduleId) {
-      return res.status(400).json({
+    const id = parseInt(req.params.id, 10);
+    const idx = schedules.findIndex((s) => s.id === id);
+
+    if (idx === -1) {
+      return res.status(404).json({
         success: false,
-        error: { code: 'VALIDATION', message: 'invalid id' }
+        error: { code: 'NOT_FOUND', message: 'Schedule not found' }
       });
     }
 
-    const { type_of_business, installments } = req.body;
-    if (!Array.isArray(installments)) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'VALIDATION', message: 'installments must be array' }
-      });
+    const current = schedules[idx];
+
+    const {
+      currency,
+      type_of_business,
+      installments // optional updated installments
+    } = req.body;
+
+    const normalizedType =
+      type_of_business != null
+        ? normalizeBusinessType(type_of_business)
+        : current.type_of_business;
+
+    let updated = {
+      ...current,
+      currency: currency || current.currency,
+      type_of_business: normalizedType,
+      updated_at: new Date()
+    };
+
+    if (installments !== undefined) {
+      const rebuilt = buildInstallmentsFromBody(
+        { installments },
+        normalizedType
+      );
+      updated.installments = rebuilt;
     }
 
-    await client.query('BEGIN');
+    schedules[idx] = updated;
 
-    if (type_of_business) {
-      await client.query(
-        `UPDATE finance_schedules
-         SET type_of_business = $1,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [type_of_business, scheduleId]
-      );
-    }
+    const enriched = computeSummary(updated);
 
-    const instRes = await client.query(
-      'SELECT id FROM finance_installments WHERE schedule_id = $1',
-      [scheduleId]
-    );
-    const instIds = instRes.rows.map((r) => r.id);
-    if (instIds.length) {
-      await client.query(
-        'DELETE FROM finance_entries WHERE installment_id = ANY($1::int[])',
-        [instIds]
-      );
-      await client.query(
-        'DELETE FROM finance_installments WHERE schedule_id = $1',
-        [scheduleId]
-      );
-    }
-
-    for (const inst of installments) {
-      const instRes2 = await client.query(
-        `INSERT INTO finance_installments
-         (schedule_id, installment_number)
-         VALUES ($1,$2)
-         RETURNING id`,
-        [scheduleId, inst.installment]
-      );
-      const installmentId = instRes2.rows[0].id;
-      for (const entry of inst.entries || []) {
-        await client.query(
-          `INSERT INTO finance_entries
-           (installment_id, description, due_date, amount, status, paid_date)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [
-            installmentId,
-            entry.description,
-            entry.due_date || null,
-            entry.amount || 0,
-            entry.status || 'NOT_DUE',
-            entry.paid_date || null
-          ]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-
-    const schedules = await loadSchedulesWithChildren();
-    const updated = schedules.find((s) => s.id === scheduleId);
-    res.json({ success: true, data: updated });
-  } catch (err) {
-    await db.pool.query('ROLLBACK');
-    console.error('Error update finance schedule', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: err.message }
+    res.json({
+      success: true,
+      data: enriched
     });
-  } finally {
-    client.release();
+  } catch (err) {
+    console.error('Error updating finance schedule:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: err.message || 'Failed to update finance schedule'
+      }
+    });
   }
 });
 
