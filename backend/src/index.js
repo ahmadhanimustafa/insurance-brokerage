@@ -22,6 +22,8 @@ app.use('/api/auth', require('./routes/auth'));           // ✅ Login
 app.use('/api/placement', require('./routes/placement')); // ✅ Clients, Policies, Documents
 app.use('/api/finance', require('./routes/finance'));     // ✅ Finance Module
 app.use('/api/endorsement', require('./routes/endorsement')); // ✅ Endorsement Module
+app.use('/api/lookups', require('./routes/lookups'));
+app.use('/api/proposal', require('./routes/proposal'));   // ✅ Proposal Module
 
 // Error handling
 app.use((err, req, res, next) => {
@@ -51,6 +53,7 @@ app.listen(PORT, () => {
   console.log(`   - /api/placement/*`);
   console.log(`   - /api/finance/*`);
   console.log(`   - /api/endorsement/*`);
+  console.log(`   - /api/proposal/*`);
 });
 
 module.exports = app;

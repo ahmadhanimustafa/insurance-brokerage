@@ -722,8 +722,6 @@ function Finance() {
   // ============ RENDER ============
 
   return (
-  <div className="finance-module">
-
     <div className="container py-4">
       <h2 className="mb-3">💸 Finance Module – Premium & Commission Schedule</h2>
 
@@ -1107,7 +1105,7 @@ function Finance() {
 
       {activeTab === 'installments' && (
         <div className="card">
-          <div className="card-header bg-body-tertiary fw-semibold d-flex justify-content-between align-items-center">
+          <div className="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center">
             <span>📅 Payment Schedule (Installment Level)</span>
             <small>Total entries: {filteredInstallments.length}</small>
           </div>
@@ -1607,9 +1605,7 @@ function Finance() {
         </div>
       )}
     </div>
-  
-  </div>
-);
+  );
 }
 
 export default Finance;

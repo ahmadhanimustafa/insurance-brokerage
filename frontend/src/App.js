@@ -12,7 +12,7 @@ import Dashboard from './pages/Dashboard';
 import Placement from './pages/Placement';
 import ProtectedRoute from './components/ProtectedRoute';
 import Finance from './pages/Finance';
-
+//import Proposal from './pages/Proposal';
 
 function App() {
   const [theme, setTheme] = useState('light');
@@ -198,6 +198,7 @@ function App() {
                   )
                 } 
               />
+              
                { /* Finance route */ }
               <Route 
                 path="/finance" 

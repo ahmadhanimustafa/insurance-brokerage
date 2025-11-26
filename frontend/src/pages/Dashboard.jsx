@@ -166,7 +166,7 @@ function Dashboard({ theme, user }) {
       <div className="row mt-4">
         <div className="col-12">
           <div className="card">
-            <div className="card-header bg-body-tertiary fw-semibold">
+            <div className="card-header bg-secondary text-white fw-bold">
               📝 Recent Activity
             </div>
             <div className="card-body">

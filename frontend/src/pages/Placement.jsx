@@ -1,814 +1,1039 @@
-// frontend/src/pages/Placement.jsx - UPDATED with search/filter, documents, policy number + PS/QS generator & validation
+// frontend/src/pages/Placement.jsx
+// Unified Placement: Clients + Proposals + Policies
+// - Proposal tab: TRX, Client, Source of Business, Sales, COB, Product, Case, Business, Booking, PS/QS (no Policy No)
+// - Policy tab: all Proposal fields + Insurer, Policy No, Effective/Expiry(+1y), Currency, Premium, Commissions (net auto = gross - source)
 
-import React, { useState, useEffect } from 'react';
-import api from '../services/api';
+import React, { useState, useEffect } from "react";
+import api from "../services/api";
+
+// Helpers
+const toInitials = (str) => {
+  if (!str) return "";
+  return str
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+};
+
+const monthToRoman = (monthNumber) => {
+  const roman = [
+    "I",
+    "II",
+    "III",
+    "IV",
+    "V",
+    "VI",
+    "VII",
+    "VIII",
+    "IX",
+    "X",
+    "XI",
+    "XII",
+  ];
+  if (monthNumber < 1 || monthNumber > 12) return "";
+  return roman[monthNumber - 1];
+};
+
+const CURRENCIES = ["IDR", "USD", "EUR"];
 
 function Placement() {
-  const [activeTab, setActiveTab] = useState('policies');
+  const [activeTab, setActiveTab] = useState("clients");
+
   const [clients, setClients] = useState([]);
+  const [proposals, setProposals] = useState([]);
   const [policies, setPolicies] = useState([]);
+
+  const [classOfBusiness, setClassOfBusiness] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  // Selected policy for documents
-  const [selectedPolicy, setSelectedPolicy] = useState(null);
-  const [policyDocuments, setPolicyDocuments] = useState([]);
-
-  // Modal states
-  const [showClientModal, setShowClientModal] = useState(false);
-  const [showPolicyModal, setShowPolicyModal] = useState(false);
-  const [showDocModal, setShowDocModal] = useState(false);
-  const [editingPolicy, setEditingPolicy] = useState(null);
-  const [editingClient, setEditingClient] = useState(null);
-  const [nameValidation, setNameValidation] = useState('');
-  const [emailValidation, setEmailValidation] = useState('');
-
-  // Autocomplete states
-  const [clientNameInput, setClientNameInput] = useState('');
-  const [clientNameOpen, setClientNameOpen] = useState(false);
-  const [insuranceNameInput, setInsuranceNameInput] = useState('');
-  const [insuranceNameOpen, setInsuranceNameOpen] = useState(false);
-  const [sourceBusinessInput, setSourceBusinessInput] = useState('');
-  const [sourceBusinessOpen, setSourceBusinessOpen] = useState(false);
-  const [previousPolicyInput, setPreviousPolicyInput] = useState('');
-  const [previousPolicyOpen, setPreviousPolicyOpen] = useState(false);
-
-  // Search & filter states (Clients)
-  const [clientSearch, setClientSearch] = useState('');
-  const [clientTypeFilter, setClientTypeFilter] = useState('');
-
-  // Search & filter states (Policies)
-  const [policySearch, setPolicySearch] = useState('');
-  const [policyTypeFilter, setPolicyTypeFilter] = useState('');
-  const [policyBusinessFilter, setPolicyBusinessFilter] = useState('');
-
-  // Validation for policy/placing/QS numbers
-  const [policyNumberValidation, setPolicyNumberValidation] = useState('');
-  const [placingValidation, setPlacingValidation] = useState('');
-  const [qsValidation, setQsValidation] = useState('');
-
-  // Document preview state
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [previewDocName, setPreviewDocName] = useState('');
-  const [previewIsBlob, setPreviewIsBlob] = useState(false);
-
-
-  // Dropdown options
-  const salutationOptions = ['PT', 'CV', 'UD', 'Bapak', 'Ibu', 'Mr', 'Mrs', 'Ms'];
-  const typeOfClientOptions = ['Policy Holder', 'Source of Business', 'Insurance', 'Partner Co-Broking'];
-  const typeOfCaseOptions = ['New', 'Renewal'];
-  const typeOfBusinessOptions = ['Direct', 'Non Direct'];
-  const currencyOptions = ['IDR', 'USD'];
-
-  const classOfBusinessOptions = [
-    'Professional Indemnity',
-    'Property Damage',
-    'Liability',
-    'Marine',
-    'Aviation',
-    'Motor',
-    'Travel',
-    'Health Insurance'
-  ];
-
-  const productNameOptions = {
-    'Professional Indemnity': ['PI Insurance', 'E&O Insurance', 'Management Liability'],
-    'Property Damage': ['Building Insurance', 'Contents Insurance', 'Equipment Coverage'],
-    'Liability': ['General Liability', 'Employers Liability', 'Product Liability'],
-    'Marine': ['Hull Insurance', 'Cargo Insurance', 'Protection & Indemnity'],
-    'Aviation': ['Aircraft Liability', 'Passenger Liability', 'Equipment Coverage'],
-    'Motor': ['Motor Fleet', 'Motor Commercial', 'Motor Private'],
-    'Travel': ['Travel Insurance', 'Trip Cancellation', 'Medical Expenses'],
-    'Health Insurance': ['Health Plans', 'Dental Plans', 'Vision Plans']
-  };
-
-  // === Helpers ===
-
-  // Generate transaction number
-  const generateTransactionNumber = () => {
-    const timestamp = Date.now().toString().slice(-8);
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `TRX-${timestamp}-${random}`;
-  };
-
-  // Generate ID with prefix based on client type
-  const generateClientId = (typeOfClient) => {
-    const prefixes = {
-      'Policy Holder': 'PH',
-      'Source of Business': 'SOB',
-      'Insurance': 'INS',
-      'Partner Co-Broking': 'PCB'
-    };
-    const prefix = prefixes[typeOfClient] || 'CLT';
-    const timestamp = Date.now().toString().slice(-6);
-    return `${prefix}-${timestamp}`;
-  };
-
-  const toInitials = (str) => {
-    if (!str) return '';
-    return str
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((w) => w[0].toUpperCase())
-      .join('');
-  };
-
-  const monthToRoman = (monthNumber) => {
-    const roman = ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
-    if (monthNumber < 1 || monthNumber > 12) return '';
-    return roman[monthNumber - 1];
-  };
-
-  // Format premium with currency
-  const formatPremium = (value) => {
-    if (!value) return '';
-    const num = parseFloat(value);
-    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  // Parse formatted premium back to number
-  const parsePremium = (formatted) => {
-    if (!formatted) return '';
-    return formatted.replace(/,/g, '');
-  };
-
-  // Validate email on-the-fly
-  const validateEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!email) {
-      setEmailValidation('');
-      return;
-    }
-
-    if (!emailRegex.test(email)) {
-      setEmailValidation('⚠️ Invalid email format');
-      return;
-    }
-
-    const existingClient = clients.find((c) => c.email?.toLowerCase() === email.toLowerCase());
-    if (existingClient) {
-      setEmailValidation(`⚠️ Email already exists: ${existingClient.name}`);
-      return;
-    }
-
-    setEmailValidation('✅ Email is valid');
-  };
-
-  // Validate and suggest name
-  const validateName = (firstName, midName, lastName) => {
-    const fullName = `${firstName} ${midName} ${lastName}`.trim();
-    const existingName = clients.find((c) => c.name?.toLowerCase() === fullName.toLowerCase());
-
-    if (existingName) {
-      return `⚠️ Similar name exists: ${existingName.name}`;
-    }
-
-    if (fullName.length < 3) {
-      return '⚠️ Name too short';
-    }
-
-    return '✅ Name is valid';
-  };
-
-  // Calculate expiry date (1 year from effective date)
-  const calculateExpiryDate = (effectiveDate) => {
-    if (!effectiveDate) return '';
-    const date = new Date(effectiveDate);
-    date.setFullYear(date.getFullYear() + 1);
-    return date.toISOString().split('T')[0];
-  };
-
-  // Get filtered clients by type
-  const getClientsByType = (type) => {
-    return clients.filter((c) => c.type_of_client === type);
-  };
-
-  // Filter autocomplete options
-  const filterAutocomplete = (items, searchTerm) => {
-    if (!searchTerm) return items;
-    return items.filter((item) =>
-      item.name?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  };
-
-  // Get previous policies for reference
-  const getPreviousPolicies = (searchTerm) => {
-    let filtered = policies.filter((p) => p.id !== policyForm.policy_id);
-    if (!searchTerm) return filtered.slice(0, 5);
-    return filtered
-      .filter(
-        (p) =>
-          p.policy_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          p.transaction_number?.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-      .slice(0, 5);
-  };
-
-  const calculateNetCommission = (gross, toSource) => {
-    if (!gross || !toSource) return '';
-    const gross_val = parseFloat(gross) || 0;
-    const source_val = parseFloat(toSource) || 0;
-    const net = gross_val - source_val;
-    return net.toFixed(2);
-  };
-
-  // === Form state ===
-
+  // =============================
+  // Client state
+  // =============================
   const initialClientForm = {
-    id: '',
-    salutation: '',
-    first_name: '',
-    mid_name: '',
-    last_name: '',
-    name: '',
-    address_1: '',
-    address_2: '',
-    address_3: '',
-    phone_1: '',
-    phone_2: '',
-    mobile_1: '',
-    mobile_2: '',
-    fax_1: '',
-    fax_2: '',
-    email: '',
-    contact: '',
-    contact_address: '',
-    contact_phone: '',
-    taxid: '',
-    tax_name: '',
-    tax_address: '',
-    lob: '',
-    type_of_client: '',
-    special_flag: false,
-    remarks: ''
-  };
-
-  const initialPolicyForm = {
-    policy_id: '',
-    transaction_number: '',
-    type_of_case: 'New',
-    reference_policy_id: '',
-    client_id: '',
-    insurance_id: '',
-    source_business_id: '',
-    policy_number: '',
-    class_of_business_id: '',
-    product_id: '',
-    type_of_business: 'Direct',
-    placing_slip_number: '',
-    qs_number: '',
-    effective_date: '',
-    expiry_date: '',
-    premium_amount: '',
-    currency: 'IDR',
-    commission_gross: '',
-    commission_to_source: '',
-    commission_net_percent: ''
+    id: "",
+    type_of_client: "",
+    salutation: "",
+    first_name: "",
+    mid_name: "",
+    last_name: "",
+    name: "",
+    address_1: "",
+    address_2: "",
+    address_3: "",
+    phone_1: "",
+    phone_2: "",
+    fax_1: "",
+    fax_2: "",
+    email: "",
+    contact_person: "",
+    contact_position: "",
+    tax_id: "",
+    tax_address: "",
+    remarks: "",
   };
 
   const [clientForm, setClientForm] = useState(initialClientForm);
-  const [policyForm, setPolicyForm] = useState(initialPolicyForm);
+  const [editingClient, setEditingClient] = useState(null);
+  const [showClientModal, setShowClientModal] = useState(false);
 
-  const [docForm, setDocForm] = useState({
-    policy_id: '',
-    document_type: 'general',
-    file_name: '',
-    file: null,
-    description: ''
-  });
+  const [nameValidation, setNameValidation] = useState("");
+  const [emailValidation, setEmailValidation] = useState("");
 
-  // === API ===
+  const typeOfClientOptions = [
+    "Client",
+    "Insurance",
+    "Partner Co-Broking",
+    "Source of Business",
+    "Sales",
+  ];
 
+  // =============================
+  // Proposal state
+  // =============================
+  const emptyProposalForm = {
+    id: "",
+    transaction_number: "",
+    type_of_case: "New",
+    reference_policy_id: "",
+    client_id: "",
+    insurance_id: "", // still exists in backend but NOT used in UI here
+    source_business_id: "",
+    sales_id: "",
+    class_of_business_id: "",
+    product_id: "",
+    type_of_business: "Direct",
+    effective_date: "", // used as "Booking Date" in UI
+    expiry_date: "",
+    premium_amount: "",
+    currency: "IDR",
+    commission_gross: "",
+    commission_to_source: "",
+    commission_net_percent: "",
+    remarks: "",
+    policy_number: "",
+    placing_slip_number: "",
+    qs_number: "",
+  };
+
+  const [proposalForm, setProposalForm] = useState(emptyProposalForm);
+  const [editingProposal, setEditingProposal] = useState(null);
+  const [showProposalModal, setShowProposalModal] = useState(false);
+  const [proposalProducts, setProposalProducts] = useState([]);
+
+  // =============================
+  // Policy state
+  // =============================
+  const emptyPolicyForm = {
+    id: "",
+    transaction_number: "",
+    type_of_case: "New",
+    reference_policy_id: "",
+    client_id: "",
+    insurance_id: "",
+    source_business_id: "",
+    sales_id: "",
+    class_of_business_id: "",
+    product_id: "",
+    type_of_business: "Direct",
+    booking_date: "",          // 👈 add this
+    effective_date: "",
+    expiry_date: "",
+    premium_amount: "",
+    currency: "IDR",
+    commission_gross: "",
+    commission_to_source: "",
+    commission_net_percent: "",
+    remarks: "",
+    policy_number: "",
+    placing_slip_number: "",
+    qs_number: "",
+  };
+
+
+  const [policyForm, setPolicyForm] = useState(emptyPolicyForm);
+  const [editingPolicy, setEditingPolicy] = useState(null);
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
+  const [policyProducts, setPolicyProducts] = useState([]);
+
+  const [policyNumberValidation, setPolicyNumberValidation] = useState("");
+  const [placingValidation, setPlacingValidation] = useState("");
+  const [qsValidation, setQsValidation] = useState("");
+
+  // =============================
+  // Search / filter
+  // =============================
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientTypeFilter, setClientTypeFilter] = useState("");
+
+  const [proposalSearch, setProposalSearch] = useState("");
+  const [proposalStatusFilter, setProposalStatusFilter] = useState("");
+
+  const [policySearch, setPolicySearch] = useState("");
+  const [policyStatusFilter, setPolicyStatusFilter] = useState("");
+
+  // =============================
+  // Helpers
+  // =============================
+
+  const updateClientName = (updatedForm) => {
+    const fullName = `${updatedForm.first_name || ""} ${
+      updatedForm.mid_name || ""
+    } ${updatedForm.last_name || ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+    return {
+      ...updatedForm,
+      name: fullName,
+    };
+  };
+
+  const generateClientId = (typeOfClient) => {
+    if (!typeOfClient) return "";
+    const prefix = toInitials(typeOfClient) || "CL";
+    const running = String(
+      clients.filter((c) => c.type_of_client === typeOfClient).length + 1
+    ).padStart(3, "0");
+    return `${prefix}-${running}`;
+  };
+
+  const validateClientName = (first, mid, last) => {
+  // Build + normalize full name
+    const full = `${first || ""} ${mid || ""} ${last || ""}`
+      .replace(/\s+/g, " ")   // collapse multiple spaces to one
+      .trim();
+
+    if (!full) return "";
+
+    const exists = clients.find((c) => {
+      if (!c.name) return false;
+
+      const stored = c.name
+        .replace(/\s+/g, " ")   // normalize stored name the same way
+        .trim()
+        .toLowerCase();
+
+      return (
+        stored === full.toLowerCase() &&
+        (!editingClient || String(c.id) !== String(editingClient.id))
+      );
+    });
+
+    if (exists) {
+      return `⚠️ Similar name exists: ${exists.name}${
+        exists.email ? ` (${exists.email})` : ""
+      }`;
+    }
+    return "✅ Name OK";
+  };
+
+
+  const isDuplicateFullName = () => {
+      const full = (clientForm.name || "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (!full) return false;
+
+      const lower = full.toLowerCase();
+
+      const existing = clients.find(
+        (c) =>
+          c.name &&
+          c.name.replace(/\s+/g, " ").trim().toLowerCase() === lower &&
+          (!editingClient || String(c.id) !== String(editingClient.id))
+      );
+
+      if (existing) {
+        setNameValidation(`⚠️ Full name already exists: ${existing.name}`);
+        return true;
+      }
+
+      // if previously there was a warning, clear it
+      if (nameValidation.startsWith("⚠️")) {
+        setNameValidation("");
+      }
+
+      return false;
+    };
+
+
+
+    const validateEmail = (email) => {
+    if (!email) {
+      setEmailValidation("Email is required");
+      return false;
+    }
+
+    const pattern = /\S+@\S+\.\S+/;
+    if (!pattern.test(email)) {
+      setEmailValidation("Invalid email format");
+      return false;
+    }
+
+    const lower = email.toLowerCase();
+    const exists = clients.find(
+      (c) =>
+        c.email &&
+        c.email.toLowerCase() === lower &&
+        (!editingClient || String(c.id) !== String(editingClient.id))
+    );
+
+    if (exists) {
+      setEmailValidation(
+        `⚠️ Email already used by ${exists.name || exists.id}`
+      );
+      return false;
+    }
+
+    setEmailValidation("✅ Email looks good");
+    return true;
+  };
+
+
+  const typeOfCaseOptions = ["New", "Renewal"];
+  const typeOfBusinessOptions = ["Direct", "Non Direct"];
+
+  // =============================
+  // Load data
+  // =============================
   useEffect(() => {
-    loadClients();
-    loadPolicies();
+    const loadAll = async () => {
+      setLoading(true);
+      setError("");
+      setSuccess("");
+      try {
+        const [clientsRes, cobRes, prodRes, proposalRes, policyRes] =
+          await Promise.all([
+            api.get("/placement/clients"),
+            api.get("/lookups", { params: { category: "CLASS_OF_BUSINESS" } }),
+            api.get("/lookups", { params: { category: "PRODUCT" } }),
+            api.get("/placement/proposals"),
+            api.get("/placement/policies"),
+          ]);
+
+        const clientsData = clientsRes.data.data || clientsRes.data || [];
+        const cobData = (cobRes.data.data || cobRes.data || []).map((c) => ({
+          ...c,
+          id: String(c.id),
+        }));
+        const productData = (prodRes.data.data || prodRes.data || []).map(
+          (p) => ({
+            ...p,
+            id: String(p.id),
+          })
+        );
+
+        const proposalData = (proposalRes.data.data || proposalRes.data || [])
+          .map((p) => ({
+            ...p,
+            class_of_business_id: p.class_of_business_id
+              ? String(p.class_of_business_id)
+              : "",
+            product_id: p.product_id ? String(p.product_id) : "",
+          }))
+          .sort((a, b) => (a.id || 0) - (b.id || 0));
+
+        const policyData = (policyRes.data.data?.policies ||
+          policyRes.data.data ||
+          policyRes.data ||
+          []
+        ).map((p) => ({
+          ...p,
+          class_of_business_id: p.class_of_business_id
+            ? String(p.class_of_business_id)
+            : "",
+          product_id: p.product_id ? String(p.product_id) : "",
+        }));
+
+        setClients(clientsData);
+        setClassOfBusiness(cobData);
+        setAllProducts(productData);
+        setProposals(proposalData);
+        setPolicies(policyData);
+      } catch (err) {
+        console.error("Error loading placement data:", err);
+        setError("Failed to load placement data.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAll();
   }, []);
 
-  const loadClients = async () => {
-    try {
-      const response = await api.get('/placement/clients');
-      if (response.data.success) {
-        setClients(response.data.data.clients || response.data.data);
+  // Product filtering for Proposal
+  // Product loading for Proposal based on COB (via backend)
+  useEffect(() => {
+    const fetchProposalProducts = async () => {
+      if (!proposalForm.class_of_business_id) {
+        setProposalProducts([]);
+        return;
       }
-    } catch (err) {
-      console.error('Error loading clients:', err);
-    }
-  };
 
-  const loadPolicies = async () => {
-    try {
-      const response = await api.get('/placement/policies');
-      if (response.data.success) {
-        setPolicies(response.data.data.policies || response.data.data);
+      try {
+        const resp = await api.get("/lookups", {
+          params: {
+            category: "PRODUCT",
+            class_of_business_id: proposalForm.class_of_business_id,
+          },
+        });
+
+        const prods = (resp.data.data || resp.data || []).map((p) => ({
+          ...p,
+          id: String(p.id),
+        }));
+
+        setProposalProducts(prods);
+      } catch (err) {
+        console.error("Error loading products for proposal COB:", err);
+        setProposalProducts([]);
       }
-    } catch (err) {
-      console.error('Error loading policies:', err);
-    }
-  };
+    };
 
-  const loadPolicyDocuments = async (policyId) => {
-    try {
-      const response = await api.get(`/placement/policies/${policyId}/documents`);
-      if (response.data.success) {
-        setPolicyDocuments(response.data.data.documents || []);
+    fetchProposalProducts();
+  }, [proposalForm.class_of_business_id]);
+
+  // Product filtering for Policy
+  // Product loading for Policy based on COB (via backend)
+  useEffect(() => {
+    const fetchPolicyProducts = async () => {
+      if (!policyForm.class_of_business_id) {
+        setPolicyProducts([]);
+        return;
       }
-    } catch (err) {
-      console.error('Error loading documents:', err);
-    }
-  };
 
-  // === Client form helpers ===
+      try {
+        const resp = await api.get("/lookups", {
+          params: {
+            category: "PRODUCT",
+            class_of_business_id: policyForm.class_of_business_id,
+          },
+        });
 
-  const updateClientName = (form) => {
-    const fullName = `${form.salutation ? form.salutation + ' ' : ''}${form.first_name} ${form.mid_name} ${form.last_name}`.trim();
-    const validation = validateName(form.first_name, form.mid_name, form.last_name);
-    setNameValidation(validation);
-    return { ...form, name: fullName };
-  };
+        const prods = (resp.data.data || resp.data || []).map((p) => ({
+          ...p,
+          id: String(p.id),
+        }));
 
-  const handleAddClient = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const clientData = {
-        ...clientForm,
-        id: clientForm.id || generateClientId(clientForm.type_of_client)
-      };
-
-      const response = await api.post('/placement/clients', clientData);
-      if (response.data.success) {
-        setSuccess('✅ Client added successfully!');
-        setShowClientModal(false);
-        setEditingClient(null);
-        setNameValidation('');
-        setEmailValidation('');
-        setClientForm(initialClientForm);
-        loadClients();
+        setPolicyProducts(prods);
+      } catch (err) {
+        console.error("Error loading products for policy COB:", err);
+        setPolicyProducts([]);
       }
-    } catch (err) {
-      setError('❌ Error: ' + (err.response?.data?.error?.message || err.message));
-    }
-    setLoading(false);
-  };
+    };
 
-  const handleEditClient = (client) => {
-    setEditingClient(client);
-    setClientForm({
-      ...initialClientForm,
-      ...client
-    });
-    setShowClientModal(true);
-  };
+    fetchPolicyProducts();
+  }, [policyForm.class_of_business_id]);
 
-  // === Policy number / PS / QS helpers & validation ===
+  // Auto calc net commission for Policy
+  useEffect(() => {
+    const gross = parseFloat(policyForm.commission_gross) || 0;
+    const source = parseFloat(policyForm.commission_to_source) || 0;
+    const net = gross - source;
+    setPolicyForm((prev) => ({
+      ...prev,
+      commission_net_percent:
+        gross === 0 && source === 0 ? "" : net.toFixed(2),
+    }));
+  }, [policyForm.commission_gross, policyForm.commission_to_source]);
 
-  const validateUniquePolicyNumber = (value, currentPolicyId) => {
+  // When Policy effective date changes, set expiry = +1 year
+  const handlePolicyEffectiveChange = (value) => {
     if (!value) {
-      setPolicyNumberValidation('');
+      setPolicyForm((prev) => ({ ...prev, effective_date: "", expiry_date: "" }));
       return;
     }
-    const dup = policies.find(
-      (p) => p.policy_number === value && p.id !== currentPolicyId
-    );
-    if (dup) {
-      setPolicyNumberValidation(`⚠️ Duplicate policy number (TRX: ${dup.transaction_number})`);
-    } else {
-      setPolicyNumberValidation('✅ Unique policy number');
-    }
-  };
-
-  const validatePlacingNumber = (value, currentPolicyId) => {
-    if (!value) {
-      setPlacingValidation('');
+    const d = new Date(value);
+    if (isNaN(d.getTime())) {
+      setPolicyForm((prev) => ({ ...prev, effective_date: value }));
       return;
     }
-    const dup = policies.find(
-      (p) => p.placing_slip_number === value && p.id !== currentPolicyId
-    );
-    if (dup) {
-      setPlacingValidation(`⚠️ Duplicate placing slip (TRX: ${dup.transaction_number})`);
-    } else {
-      setPlacingValidation('✅ Unique placing slip');
-    }
+    const exp = new Date(d);
+    exp.setFullYear(exp.getFullYear() + 1);
+    const expStr = exp.toISOString().split("T")[0];
+
+    setPolicyForm((prev) => ({
+      ...prev,
+      effective_date: value,
+      expiry_date: expStr,
+    }));
   };
 
-  const validateQsNumber = (value, currentPolicyId) => {
-    if (!value) {
-      setQsValidation('');
-      return;
-    }
-    const dup = policies.find(
-      (p) => p.qs_number === value && p.id !== currentPolicyId
+  // =============================
+  // ID helpers
+  // =============================
+  const getClientName = (id) =>
+    clients.find((c) => String(c.id) === String(id))?.name || "";
+
+  const getCobLabel = (id) =>
+    classOfBusiness.find((c) => String(c.id) === String(id))?.label || "";
+
+  const getProductLabel = (id) =>
+    allProducts.find((p) => String(p.id) === String(id))?.label || "";
+
+  const getClientsByTypes = (...types) =>
+    clients.filter((c) => types.includes(c.type_of_client));
+
+  // =============================
+  // Policy / PS / QS generators
+  // =============================
+  const validateUniquePolicyNumber = (value, ignoreId) => {
+    const clash = policies.find(
+      (p) =>
+        p.policy_number === value &&
+        (!ignoreId || String(p.id) !== String(ignoreId))
     );
-    if (dup) {
-      setQsValidation(`⚠️ Duplicate quotation slip (TRX: ${dup.transaction_number})`);
-    } else {
-      setQsValidation('✅ Unique quotation slip');
-    }
+    setPolicyNumberValidation(clash ? "⚠️ Policy number already used." : "");
   };
 
-  const generatePolicyNumber = () => {
-    const cob = policyForm.class_of_business_id;
-    const prod = policyForm.product_id;
-    const eff = policyForm.effective_date || new Date().toISOString().split('T')[0];
+  const validatePlacingNumber = (value, ignoreId) => {
+    const clash = policies.find(
+      (p) =>
+        p.placing_slip_number === value &&
+        (!ignoreId || String(p.id) !== String(ignoreId))
+    );
+    setPlacingValidation(clash ? "⚠️ Placing Slip already used." : "");
+  };
+
+  const validateQsNumber = (value, ignoreId) => {
+    const clash = policies.find(
+      (p) =>
+        p.qs_number === value &&
+        (!ignoreId || String(p.id) !== String(ignoreId))
+    );
+    setQsValidation(clash ? "⚠️ Quotation Slip already used." : "");
+  };
+
+  const getDateFromForm = (form) =>
+    form.effective_date || new Date().toISOString().split("T")[0];
+
+  const generatePsOrQsForProposal = (kind) => {
+    const cob = classOfBusiness.find(
+      (c) => String(c.id) === String(proposalForm.class_of_business_id)
+    );
+    const prod = proposalProducts.find(
+      (p) => String(p.id) === String(proposalForm.product_id)
+    );
+    const eff = getDateFromForm(proposalForm);
 
     if (!cob || !prod) {
-      setPolicyNumberValidation('⚠️ Please choose Class of Business & Product first');
+      setError("Select Class of Business & Product first.");
       return;
     }
 
-    const year = new Date(eff).getFullYear();
-    const cobInit = toInitials(cob);
-    const prodInit = toInitials(prod);
-    const prefix = `${cobInit}${prodInit}-${year}-`;
+    const d = new Date(eff);
+    const year = d.getFullYear();
+    const monthRoman = monthToRoman(d.getMonth() + 1);
+    const prodInit = toInitials(prod.label || prod.name || prod.code || "");
+    const caseCode = proposalForm.type_of_case === "Renewal" ? "RN" : "NB";
 
-    const existing = policies
-      .map((p) => p.policy_number)
-      .filter((num) => num && num.startsWith(prefix));
+    const list =
+      kind === "PS"
+        ? proposals.map((p) => p.placing_slip_number).filter(Boolean)
+        : proposals.map((p) => p.qs_number).filter(Boolean);
 
     let maxSeq = 0;
-    existing.forEach((num) => {
-      const parts = num.split('-');
-      const seqPart = parts[2];
-      const n = parseInt(seqPart, 10);
+    list.forEach((num) => {
+      const parts = (num || "").split("/");
+      if (parts[0] !== kind) return;
+      const n = parseInt(parts[2], 10);
       if (!isNaN(n) && n > maxSeq) maxSeq = n;
     });
 
     const next = maxSeq + 1;
-    const seqStr = String(next).padStart(3, '0');
-    const newNumber = `${cobInit}${prodInit}-${year}-${seqStr}`;
+    const seqStr = String(next).padStart(3, "0");
 
-    setPolicyForm((prev) => ({
-      ...prev,
-      policy_number: newNumber
-    }));
-    validateUniquePolicyNumber(newNumber, policyForm.policy_id || editingPolicy?.id);
+    const value =
+      `${kind}/ICIB/` +
+      `${seqStr}/` +
+      `${monthRoman}/` +
+      `${caseCode}/` +
+      `${prodInit}-${year}`;
+
+    if (kind === "PS") {
+      setProposalForm((prev) => ({ ...prev, placing_slip_number: value }));
+    } else {
+      setProposalForm((prev) => ({ ...prev, qs_number: value }));
+    }
+    setError("");
   };
 
-  const generateRefNumber = (kind) => {
-    const cob = policyForm.class_of_business_id;
-    const prod = policyForm.product_id;
-    const eff = policyForm.effective_date || new Date().toISOString().split('T')[0];
+  const generatePolicyNumberForPolicy = () => {
+    const cob = classOfBusiness.find(
+      (c) => String(c.id) === String(policyForm.class_of_business_id)
+    );
+    const prod = policyProducts.find(
+      (p) => String(p.id) === String(policyForm.product_id)
+    );
+    const eff = getDateFromForm(policyForm);
 
     if (!cob || !prod) {
-      if (kind === 'PS') {
-        setPlacingValidation('⚠️ Please choose Class of Business & Product first');
-      } else {
-        setQsValidation('⚠️ Please choose Class of Business & Product first');
-      }
+      setPolicyNumberValidation("Select COB & Product first.");
       return;
     }
 
-    const date = new Date(eff);
-    const year = date.getFullYear();
-    const monthRoman = monthToRoman(date.getMonth() + 1);
-    const cobInit = toInitials(cob);
-    const prodInit = toInitials(prod);
+    const d = new Date(eff);
+    const year = d.getFullYear();
+    const monthRoman = monthToRoman(d.getMonth() + 1);
+    const cobInit = toInitials(cob.label || cob.name || cob.code || "");
+    const prodInit = toInitials(prod.label || prod.name || prod.code || "");
+    const suffix = `/${cobInit}/${prodInit}/${monthRoman}/${year}`;
 
-    const list =
-      kind === 'PS'
-        ? policies.map((p) => p.placing_slip_number).filter(Boolean)
-        : policies.map((p) => p.qs_number).filter(Boolean);
+    const existing = policies
+      .map((p) => p.policy_number)
+      .filter((num) => num && num.startsWith("POL/") && num.endsWith(suffix));
 
     let maxSeq = 0;
-    list.forEach((num) => {
-      const parts = num.split('/');
-      if (parts[0] !== kind) return;
+    existing.forEach((num) => {
+      const parts = num.split("/");
+      if (parts[0] !== "POL") return;
       const n = parseInt(parts[1], 10);
       if (!isNaN(n) && n > maxSeq) maxSeq = n;
     });
 
     const next = maxSeq + 1;
-    const seqStr = String(next).padStart(3, '0');
-    const value = `${kind}/${seqStr}/${cobInit}/${prodInit}/${monthRoman}/${year}`;
+    const running = String(next).padStart(3, "0");
+    const newNumber = `POL/${running}${suffix}`;
 
-    if (kind === 'PS') {
-      setPolicyForm((prev) => ({
-        ...prev,
-        placing_slip_number: value
-      }));
-      validatePlacingNumber(value, policyForm.policy_id || editingPolicy?.id);
+    setPolicyForm((prev) => ({ ...prev, policy_number: newNumber }));
+    validateUniquePolicyNumber(
+      newNumber,
+      policyForm.id || editingPolicy?.id || null
+    );
+  };
+
+  const generatePsOrQsForPolicy = (kind) => {
+    const cob = classOfBusiness.find(
+      (c) => String(c.id) === String(policyForm.class_of_business_id)
+    );
+    const prod = policyProducts.find(
+      (p) => String(p.id) === String(policyForm.product_id)
+    );
+    const eff = getDateFromForm(policyForm);
+
+    if (!cob || !prod) {
+      if (kind === "PS") {
+        setPlacingValidation("Select COB & Product first.");
+      } else {
+        setQsValidation("Select COB & Product first.");
+      }
+      return;
+    }
+
+    const d = new Date(eff);
+    const year = d.getFullYear();
+    const monthRoman = monthToRoman(d.getMonth() + 1);
+    const prodInit = toInitials(prod.label || prod.name || prod.code || "");
+    const caseCode = policyForm.type_of_case === "Renewal" ? "RN" : "NB";
+
+    const list =
+      kind === "PS"
+        ? policies.map((p) => p.placing_slip_number).filter(Boolean)
+        : policies.map((p) => p.qs_number).filter(Boolean);
+
+    let maxSeq = 0;
+    list.forEach((num) => {
+      const parts = (num || "").split("/");
+      if (parts[0] !== kind) return;
+      const n = parseInt(parts[2], 10);
+      if (!isNaN(n) && n > maxSeq) maxSeq = n;
+    });
+
+    const next = maxSeq + 1;
+    const seqStr = String(next).padStart(3, "0");
+
+    const value =
+      `${kind}/ICIB/` +
+      `${seqStr}/` +
+      `${monthRoman}/` +
+      `${caseCode}/` +
+      `${prodInit}-${year}`;
+
+    if (kind === "PS") {
+      setPolicyForm((prev) => ({ ...prev, placing_slip_number: value }));
+      validatePlacingNumber(
+        value,
+        policyForm.id || editingPolicy?.id || null
+      );
     } else {
-      setPolicyForm((prev) => ({
-        ...prev,
-        qs_number: value
-      }));
-      validateQsNumber(value, policyForm.policy_id || editingPolicy?.id);
+      setPolicyForm((prev) => ({ ...prev, qs_number: value }));
+      validateQsNumber(value, policyForm.id || editingPolicy?.id || null);
     }
   };
 
-  // === Policy save/edit ===
+  // =============================
+  // CRUD handlers
+  // =============================
+
+  const resetClientForm = () => {
+    setClientForm(initialClientForm);
+    setEditingClient(null);
+    setNameValidation("");
+    setEmailValidation("");
+  };
+
+  const handleAddClient = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+
+    // 1) Validate email
+    const emailOk = validateEmail(clientForm.email);
+    if (!emailOk) {
+      setError("❌ Please fix the email (invalid or already used) before saving.");
+      return;
+    }
+
+    // 2) Validate full name (duplicate check)
+    if (isDuplicateFullName()) {
+      setError("❌ Full name already exists, please use a different name.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload = {
+        ...clientForm,
+        id: clientForm.id || generateClientId(clientForm.type_of_client),
+      };
+
+      if (editingClient) {
+        await api.put(`/placement/clients/${editingClient.id}`, payload);
+        setSuccess("Client updated.");
+      } else {
+        await api.post("/placement/clients", payload);
+        setSuccess("Client created.");
+      }
+
+      const res = await api.get("/placement/clients");
+      const data = res.data.data || res.data || [];
+      setClients(data);
+
+      setShowClientModal(false);
+      resetClientForm();
+    } catch (err) {
+      console.error("Error saving client:", err);
+      setError("Failed to save client.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  const resetProposalForm = () => {
+    setProposalForm({
+      ...emptyProposalForm,
+      transaction_number:
+        emptyProposalForm.transaction_number ||
+        `TRX-${Date.now().toString().slice(-6)}`,
+    });
+    setEditingProposal(null);
+  };
+
+  const handleSaveProposal = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const payload = { ...proposalForm };
+
+      if (editingProposal) {
+        await api.put(
+          `/placement/proposals/${editingProposal.id}`,
+          payload
+        );
+        setSuccess("Proposal updated.");
+      } else {
+        await api.post("/placement/proposals", payload);
+        setSuccess("Proposal created.");
+      }
+
+      const res = await api.get("/placement/proposals");
+      const data = (res.data.data || res.data || []).map((p) => ({
+        ...p,
+        class_of_business_id: p.class_of_business_id
+          ? String(p.class_of_business_id)
+          : "",
+        product_id: p.product_id ? String(p.product_id) : "",
+      }));
+      setProposals(data);
+
+      setShowProposalModal(false);
+      resetProposalForm();
+    } catch (err) {
+      console.error("Error saving proposal:", err);
+      setError("Failed to save proposal.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+
+  const handleConvertProposalToPolicy = async (proposal) => {
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const payload = {
+        transaction_number: proposal.transaction_number,
+        type_of_case: proposal.type_of_case,
+        reference_policy_id: proposal.reference_policy_id,
+        client_id: proposal.client_id,
+        insurance_id: proposal.insurance_id,
+        source_business_id: proposal.source_business_id,
+        sales_id: proposal.sales_id,
+        class_of_business_id: proposal.class_of_business_id,
+        product_id: proposal.product_id,
+        type_of_business: proposal.type_of_business,
+        placing_slip_number: proposal.placing_slip_number,
+        qs_number: proposal.qs_number,
+        policy_number: "", // fill in policy tab
+        booking_date: proposal.effective_date || proposal.booking_date || null, // 👈 Booking from Proposal
+        effective_date: "",      // 👈 fresh, to be set in Policies tab
+        expiry_date: "",
+        premium_amount: proposal.premium_amount,
+        currency: proposal.currency,
+        commission_gross: proposal.commission_gross,
+        commission_to_source: proposal.commission_to_source,
+        commission_net_percent: proposal.commission_net_percent,
+        remarks: proposal.remarks,
+      };
+
+
+      await api.post("/placement/policies", payload);
+      await api.post(`/placement/proposals/${proposal.id}/convert`);
+
+      const [polRes, propRes] = await Promise.all([
+        api.get("/placement/policies"),
+        api.get("/placement/proposals"),
+      ]);
+
+      const polData = (polRes.data.data?.policies ||
+        polRes.data.data ||
+        polRes.data ||
+        []
+      ).map((p) => ({
+        ...p,
+        class_of_business_id: p.class_of_business_id
+          ? String(p.class_of_business_id)
+          : "",
+        product_id: p.product_id ? String(p.product_id) : "",
+      }));
+
+      const propData = (propRes.data.data || propRes.data || []).map((p) => ({
+        ...p,
+        class_of_business_id: p.class_of_business_id
+          ? String(p.class_of_business_id)
+          : "",
+        product_id: p.product_id ? String(p.product_id) : "",
+      }));
+
+      setPolicies(polData);
+      setProposals(propData);
+
+      setSuccess("Proposal converted to Policy. Complete details in Policies tab.");
+    } catch (err) {
+      console.error("Error converting proposal:", err);
+      setError("Failed to convert proposal.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetPolicyForm = () => {
+    setPolicyForm(emptyPolicyForm);
+    setEditingPolicy(null);
+    setPolicyNumberValidation("");
+    setPlacingValidation("");
+    setQsValidation("");
+  };
 
   const handleSavePolicy = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError("");
+    setSuccess("");
     try {
-      const policyData = {
-        ...policyForm,
-        premium_amount: parsePremium(policyForm.premium_amount),
-        commission_net_percent: calculateNetCommission(
-          policyForm.commission_gross,
-          policyForm.commission_to_source
-        )
-      };
-
+      const payload = { ...policyForm };
       if (editingPolicy) {
-        const response = await api.put(`/placement/policies/${editingPolicy.id}`, policyData);
-        if (response.data.success) {
-          setSuccess('✅ Policy updated successfully!');
-          setEditingPolicy(null);
-        }
+        await api.put(`/placement/policies/${editingPolicy.id}`, payload);
+        setSuccess("Policy updated.");
       } else {
-        const response = await api.post('/placement/policies', policyData);
-        if (response.data.success) {
-          setSuccess('✅ Policy created successfully!');
-        }
+        await api.post("/placement/policies", payload);
+        setSuccess("Policy created.");
       }
+
+      const res = await api.get("/placement/policies");
+      const data = (res.data.data?.policies ||
+        res.data.data ||
+        res.data ||
+        []
+      ).map((p) => ({
+        ...p,
+        class_of_business_id: p.class_of_business_id
+          ? String(p.class_of_business_id)
+          : "",
+        product_id: p.product_id ? String(p.product_id) : "",
+      }));
+      setPolicies(data);
+
       setShowPolicyModal(false);
-      setPolicyForm(initialPolicyForm);
-      setClientNameInput('');
-      setInsuranceNameInput('');
-      setSourceBusinessInput('');
-      setPreviousPolicyInput('');
-      setPolicyNumberValidation('');
-      setPlacingValidation('');
-      setQsValidation('');
-      loadPolicies();
+      resetPolicyForm();
     } catch (err) {
-      setError('❌ Error: ' + (err.response?.data?.error?.message || err.message));
-    }
-    setLoading(false);
-  };
-
-  const handleEditPolicy = (policy) => {
-    setEditingPolicy(policy);
-    setPolicyForm({
-      ...initialPolicyForm,
-      policy_id: policy.id || '',
-      transaction_number: policy.transaction_number || '',
-      type_of_case: policy.type_of_case || 'New',
-      reference_policy_id: policy.reference_policy_id || '',
-      client_id: policy.client_id || '',
-      insurance_id: policy.insurance_id || '',
-      source_business_id: policy.source_business_id || '',
-      policy_number: policy.policy_number || '',
-      class_of_business_id: policy.class_of_business_id || '',
-      product_id: policy.product_id || '',
-      type_of_business: policy.type_of_business || 'Direct',
-      placing_slip_number: policy.placing_slip_number || '',
-      qs_number: policy.qs_number || '',
-      effective_date: policy.effective_date || '',
-      expiry_date: policy.expiry_date || '',
-      premium_amount: formatPremium(policy.premium_amount) || '',
-      currency: policy.currency || 'IDR',
-      commission_gross: policy.commission_gross || '',
-      commission_to_source: policy.commission_to_source || '',
-      commission_net_percent: policy.commission_net_percent || ''
-    });
-
-    setClientNameInput(clients.find((c) => c.id === policy.client_id)?.name || '');
-    setInsuranceNameInput(clients.find((c) => c.id === policy.insurance_id)?.name || '');
-    setSourceBusinessInput(clients.find((c) => c.id === policy.source_business_id)?.name || '');
-    setPreviousPolicyInput(
-      policy.reference_policy_id
-        ? policies.find((p) => p.id === policy.reference_policy_id)?.policy_number || ''
-        : ''
-    );
-
-    // re-validate numbers on edit
-    validateUniquePolicyNumber(policy.policy_number || '', policy.id);
-    validatePlacingNumber(policy.placing_slip_number || '', policy.id);
-    validateQsNumber(policy.qs_number || '', policy.id);
-
-    setShowPolicyModal(true);
-  };
-
-  // === Documents ===
-
-  const handleAddDocument = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const response = await api.post('/placement/documents', {
-        policy_id: docForm.policy_id,
-        document_type: docForm.document_type,
-        file_name: docForm.file_name || docForm.file?.name,
-        description: docForm.description,
-        file_size: docForm.file?.size
-      });
-      if (response.data.success) {
-        setSuccess('✅ Document uploaded!');
-        setShowDocModal(false);
-        setDocForm({
-          policy_id: selectedPolicy?.id || '',
-          document_type: 'general',
-          file_name: '',
-          file: null,
-          description: ''
-        });
-        if (selectedPolicy) loadPolicyDocuments(selectedPolicy.id);
-      }
-    } catch (err) {
-      setError('❌ Error: ' + (err.response?.data?.error?.message || err.message));
-    }
-    setLoading(false);
-  };
-
-  const handleSelectPolicy = (policy) => {
-    setSelectedPolicy(policy);
-    loadPolicyDocuments(policy.id);
-  };
-
-  const handleDeleteDocument = async (docId) => {
-    if (!window.confirm('Delete this document?')) return;
-    try {
-      await api.delete(`/placement/documents/${docId}`);
-      setSuccess('✅ Document deleted!');
-      if (selectedPolicy) loadPolicyDocuments(selectedPolicy.id);
-    } catch (err) {
-      setError('❌ Error deleting document');
+      console.error("Error saving policy:", err);
+      setError("Failed to save policy.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handlePreviewDocument = async (doc) => {
-    try {
-      // Reset dulu
-      if (previewUrl && previewIsBlob) {
-        window.URL.revokeObjectURL(previewUrl);
-      }
-      setPreviewUrl(null);
-      setPreviewDocName(doc.file_name || 'Document');
-      setPreviewIsBlob(false);
-
-      // Kalau file_url eksternal (misal dari Google Drive / S3), langsung embed
-      if (doc.file_url && /^https?:\/\//.test(doc.file_url)) {
-        setPreviewUrl(doc.file_url);
-        setPreviewIsBlob(false);
-        setShowPreviewModal(true);
-        return;
-      }
-
-      // Kalau file diserve via API backend → ambil sebagai blob
-      const response = await api.get(`/placement/documents/${doc.id}/download`, {
-        responseType: 'blob'
-      });
-
-      const blob = new Blob([response.data]);
-      const url = window.URL.createObjectURL(blob);
-
-      setPreviewUrl(url);
-      setPreviewIsBlob(true);
-      setShowPreviewModal(true);
-    } catch (err) {
-      console.error('Error previewing document:', err);
-      setError('❌ Error previewing document');
-    }
-  };
-
-
-  const handleDownloadDocument = async (doc) => {
-    try {
-      if (doc.file_url) {
-        const link = document.createElement('a');
-        link.href = doc.file_url;
-        link.setAttribute('download', doc.file_name || 'document');
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        return;
-      }
-      const response = await api.get(`/placement/documents/${doc.id}/download`, {
-        responseType: 'blob'
-      });
-      const blob = new Blob([response.data]);
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', doc.file_name || 'document');
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Error downloading document:', err);
-      setError('❌ Error downloading document');
-    }
-  };
-
-  // === Send to Finance ===
-  const handleSendToFinance = async (policy) => {
-  try {
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
-    const res = await api.post(
-      `/placement/policies/${policy.id}/send-to-finance`
-    );
-
-    if (res.data.success) {
-      setSuccess('✅ Policy sudah dikirim ke Finance.');
-      // optional: reload policies biar flag sent_to_finance ke-refresh
-      await loadPolicies();
-    } else {
-      setError('Gagal mengirim policy ke Finance.');
-    }
-  } catch (err) {
-    setError(
-      '❌ Error kirim ke Finance: ' +
-        (err.response?.data?.error?.message || err.message)
-    );
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-  // === Filtered lists ===
-
-  const filteredClients = clients.filter((client) => {
+  // =============================
+  // Filtered lists
+  // =============================
+  const filteredClients = clients.filter((c) => {
     const term = clientSearch.trim().toLowerCase();
-    const matchesType = !clientTypeFilter || client.type_of_client === clientTypeFilter;
+    const matchesType =
+      !clientTypeFilter || c.type_of_client === clientTypeFilter;
     const matchesSearch =
       !term ||
-      [client.id, client.name, client.email, client.phone_1, client.taxid].some(
-        (field) => field && field.toString().toLowerCase().includes(term)
+      [c.id, c.name, c.email, c.phone_1, c.tax_id].some(
+        (field) =>
+          field && field.toString().toLowerCase().includes(term)
       );
     return matchesType && matchesSearch;
   });
 
-  const filteredPolicies = policies.filter((policy) => {
-    const term = policySearch.trim().toLowerCase();
-    const clientName = clients.find((c) => c.id === policy.client_id)?.name || '';
-    const insuranceName = clients.find((c) => c.id === policy.insurance_id)?.name || '';
-    const matchesType = !policyTypeFilter || policy.type_of_case === policyTypeFilter;
-    const matchesBusiness = !policyBusinessFilter || policy.type_of_business === policyBusinessFilter;
+  const filteredProposals = proposals.filter((p) => {
+    const term = proposalSearch.trim().toLowerCase();
+    const clientName = getClientName(p.client_id);
+    const sourceName = getClientName(p.source_business_id);
+    const salesName = getClientName(p.sales_id);
+    const matchesStatus =
+      !proposalStatusFilter || p.status === proposalStatusFilter;
+
     const matchesSearch =
       !term ||
       [
-        policy.transaction_number,
-        policy.policy_number,
+        p.transaction_number,
+        p.placing_slip_number,
+        p.qs_number,
         clientName,
-        insuranceName,
-        policy.qs_number,
-        policy.placing_slip_number
-      ].some((field) => field && field.toString().toLowerCase().includes(term));
-    return matchesType && matchesBusiness && matchesSearch;
+        sourceName,
+        salesName,
+      ].some(
+        (field) =>
+          field && field.toString().toLowerCase().includes(term)
+      );
+
+    return matchesStatus && matchesSearch;
   });
 
+  const filteredPolicies = policies.filter((p) => {
+    const term = policySearch.trim().toLowerCase();
+    const clientName = getClientName(p.client_id);
+    const insurerName = getClientName(p.insurance_id);
+    const matchesStatus =
+      !policyStatusFilter || p.sent_to_finance
+        ? policyStatusFilter === "SENT_TO_FINANCE"
+        : policyStatusFilter === "DRAFT";
+
+    const statusString = p.sent_to_finance ? "SENT_TO_FINANCE" : "DRAFT";
+
+    const matchesSearch =
+      !term ||
+      [
+        p.policy_number,
+        p.placing_slip_number,
+        p.qs_number,
+        clientName,
+        insurerName,
+      ].some(
+        (field) =>
+          field && field.toString().toLowerCase().includes(term)
+      );
+
+    if (!policyStatusFilter) {
+      return matchesSearch;
+    }
+    return matchesSearch && statusString === policyStatusFilter;
+  });
+
+  // =============================
+  // Render
+  // =============================
+
   return (
-    <div className="placement-module">
-      {error && (
-        <div className="alert alert-danger alert-dismissible fade show">
-          <strong>Error!</strong> {error}
-          <button type="button" className="btn-close" onClick={() => setError('')}></button>
-        </div>
-      )}
-      {success && (
-        <div className="alert alert-success alert-dismissible fade show">
-          <strong>Success!</strong> {success}
-          <button type="button" className="btn-close" onClick={() => setSuccess('')}></button>
+    <div className="container py-3">
+      <h2 className="mb-3">Placement</h2>
+
+      {(error || success) && (
+        <div className="mb-3">
+          {error && <div className="alert alert-danger mb-2">{error}</div>}
+          {success && <div className="alert alert-success mb-0">{success}</div>}
         </div>
       )}
 
-      <ul className="nav nav-tabs mb-4">
+      <ul className="nav nav-tabs mb-3">
         <li className="nav-item">
           <button
-            className={`nav-link ${activeTab === 'clients' ? 'active' : ''}`}
-            onClick={() => setActiveTab('clients')}
+            className={`nav-link ${activeTab === "clients" ? "active" : ""}`}
+            onClick={() => setActiveTab("clients")}
           >
-            👥 Clients
+            Clients
           </button>
         </li>
         <li className="nav-item">
           <button
-            className={`nav-link ${activeTab === 'policies' ? 'active' : ''}`}
-            onClick={() => setActiveTab('policies')}
+            className={`nav-link ${activeTab === "proposals" ? "active" : ""}`}
+            onClick={() => setActiveTab("proposals")}
           >
-            📋 Policies
+            Proposals
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === "policies" ? "active" : ""}`}
+            onClick={() => setActiveTab("policies")}
+          >
+            Policies
           </button>
         </li>
       </ul>
 
-      {/* === CLIENTS TAB === */}
-      {activeTab === 'clients' && (
+      {/* CLIENTS TAB */}
+      {activeTab === "clients" && (
         <div>
-          <div className="row mb-3">
-            <div className="col-md-6 mb-2">
-              <label className="form-label small text-muted">Search Clients</label>
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h5 className="mb-0">Clients</h5>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                resetClientForm();
+                setShowClientModal(true);
+              }}
+            >
+              + New Client
+            </button>
+          </div>
+
+          <div className="row g-2 mb-3">
+            <div className="col-md-6">
               <input
                 type="text"
                 className="form-control"
-                placeholder="Search by name, ID, email, phone, or tax ID..."
+                placeholder="Search by name, email, phone, tax ID..."
                 value={clientSearch}
                 onChange={(e) => setClientSearch(e.target.value)}
               />
             </div>
-            <div className="col-md-3 mb-2">
-              <label className="form-label small text-muted">Filter Type</label>
+            <div className="col-md-3">
               <select
                 className="form-select"
                 value={clientTypeFilter}
@@ -822,13 +1047,12 @@ function Placement() {
                 ))}
               </select>
             </div>
-            <div className="col-md-3 mb-2 d-flex align-items-end">
+            <div className="col-md-3 d-grid">
               <button
-                type="button"
-                className="btn btn-outline-secondary w-100"
+                className="btn btn-outline-secondary"
                 onClick={() => {
-                  setClientSearch('');
-                  setClientTypeFilter('');
+                  setClientSearch("");
+                  setClientTypeFilter("");
                 }}
               >
                 Reset Filters
@@ -836,117 +1060,232 @@ function Placement() {
             </div>
           </div>
 
-          <button
-            className="btn btn-primary mb-3"
-            onClick={() => {
-              setEditingClient(null);
-              setClientForm(initialClientForm);
-              setShowClientModal(true);
-              setNameValidation('');
-              setEmailValidation('');
-            }}
-          >
-            ➕ Add Client
-          </button>
-          <div className="table-responsive">
-            <table className="table table-hover table-sm">
-              <thead>
-                <tr>
-                  <th>Client ID</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Email</th>
-                  <th>Phone</th>
-                  <th>Tax ID</th>
-                  <th>Special</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClients.map((client) => (
-                  <tr key={client.id}>
-                    <td className="fw-bold">{client.id}</td>
-                    <td>{client.name}</td>
-                    <td>
-                      <span className="badge bg
-                      -info">{client.type_of_client}</span>
-                    </td>
-                    <td>{client.email}</td>
-                    <td>{client.phone_1}</td>
-                    <td>{client.taxid}</td>
-                    <td>{client.special_flag ? '✓' : '-'}</td>
-                    <td>
-                    <button
-                      className="btn btn-sm btn-warning"
-                      onClick={() => handleEditClient(client)}
-                    >
-                      ✏️ Edit
-                    </button>
-                    </td>
+          {loading && <div className="text-muted">Loading...</div>}
 
+          {!loading && filteredClients.length === 0 && (
+            <div className="alert alert-info">No clients found.</div>
+          )}
+
+          {!loading && filteredClients.length > 0 && (
+            <div className="table-responsive">
+              <table className="table table-sm align-middle">
+                <thead className="table-light">
+                  <tr>
+                    <th>Client ID</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Email</th>
+                    <th>Phone 1</th>
+                    <th>Tax ID</th>
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {filteredClients.length === 0 && (
-            <div className="alert alert-info">📭 No clients found</div>
+                </thead>
+                <tbody>
+                  {filteredClients.map((c) => (
+                    <tr key={c.id}>
+                      <td>{c.id}</td>
+                      <td>{c.name}</td>
+                      <td>{c.type_of_client}</td>
+                      <td>{c.email}</td>
+                      <td>{c.phone_1}</td>
+                      <td>{c.tax_id}</td>
+                      <td className="text-end">
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => {
+                            setEditingClient(c);
+                            setClientForm({
+                              ...initialClientForm,
+                              ...c,
+                            });
+                            setShowClientModal(true);
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
 
-      {/* === POLICIES TAB === */}
-      {activeTab === 'policies' && (
+      {/* PROPOSALS TAB */}
+      {activeTab === "proposals" && (
         <div>
-          <div className="d-flex flex-column flex-md-row gap-2 mb-3">
-            <div className="flex-grow-1">
-              <label className="form-label small text-muted">Search Policies</label>
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h5 className="mb-0">Proposals</h5>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                resetProposalForm();
+                setShowProposalModal(true);
+              }}
+            >
+              + New Proposal
+            </button>
+          </div>
+
+          <div className="row g-2 mb-3">
+            <div className="col-md-6">
               <input
                 type="text"
                 className="form-control"
-                placeholder="Search by TRX, policy no, client, insurance..."
+                placeholder="Search by TRX, client, source, sales, PS/QS..."
+                value={proposalSearch}
+                onChange={(e) => setProposalSearch(e.target.value)}
+              />
+            </div>
+            <div className="col-md-3">
+              <select
+                className="form-select"
+                value={proposalStatusFilter}
+                onChange={(e) => setProposalStatusFilter(e.target.value)}
+              >
+                <option value="">All Status</option>
+                <option value="DRAFT">Draft</option>
+                <option value="CONVERTED">Converted</option>
+              </select>
+            </div>
+            <div className="col-md-3 d-grid">
+              <button
+                className="btn btn-outline-secondary"
+                onClick={() => {
+                  setProposalSearch("");
+                  setProposalStatusFilter("");
+                }}
+              >
+                Reset Filters
+              </button>
+            </div>
+          </div>
+
+          {loading && <div className="text-muted">Loading...</div>}
+
+          {!loading && filteredProposals.length === 0 && (
+            <div className="alert alert-info">No proposals found.</div>
+          )}
+
+          {!loading && filteredProposals.length > 0 && (
+            <div className="table-responsive mb-3">
+              <table className="table table-sm align-middle">
+                <thead className="table-light">
+                  <tr>
+                    <th>TRX No</th>
+                    <th>Client</th>
+                    <th>Source of Business</th>
+                    <th>Sales</th>
+                    <th>COB</th>
+                    <th>Product</th>
+                    <th>Booking Date</th>
+                    <th>PS</th>
+                    <th>QS</th>
+                    <th>Status</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredProposals.map((p) => (
+                    <tr key={p.id}>
+                      <td>{p.transaction_number}</td>
+                      <td>{getClientName(p.client_id)}</td>
+                      <td>{getClientName(p.source_business_id)}</td>
+                      <td>{getClientName(p.sales_id)}</td>
+                      <td>{getCobLabel(p.class_of_business_id)}</td>
+                      <td>{getProductLabel(p.product_id)}</td>
+                      <td>{p.booking_date_date || "-"}</td>
+                      <td>{p.placing_slip_number || "-"}</td>
+                      <td>{p.qs_number || "-"}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            p.status === "CONVERTED"
+                              ? "bg-success"
+                              : "bg-secondary"
+                          }`}
+                        >
+                          {p.status || "DRAFT"}
+                        </span>
+                      </td>
+                      <td className="text-end">
+                        <div className="btn-group btn-group-sm">
+                          <button
+                            className="btn btn-outline-secondary"
+                            onClick={() => {
+                              setEditingProposal(p);
+                              setProposalForm({
+                                ...emptyProposalForm,
+                                ...p,
+                              });
+                              setShowProposalModal(true);
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="btn btn-outline-primary"
+                            disabled={p.status === "CONVERTED"}
+                            onClick={() => handleConvertProposalToPolicy(p)}
+                          >
+                            Convert
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* POLICIES TAB */}
+      {activeTab === "policies" && (
+        <div>
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h5 className="mb-0">Policies</h5>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                resetPolicyForm();
+                setShowPolicyModal(true);
+              }}
+            >
+              + New Policy
+            </button>
+          </div>
+
+          <div className="row g-2 mb-3">
+            <div className="col-md-6">
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search by policy, client, insurer, PS/QS..."
                 value={policySearch}
                 onChange={(e) => setPolicySearch(e.target.value)}
               />
             </div>
-            <div>
-              <label className="form-label small text-muted">Case Type</label>
+            <div className="col-md-3">
               <select
                 className="form-select"
-                value={policyTypeFilter}
-                onChange={(e) => setPolicyTypeFilter(e.target.value)}
+                value={policyStatusFilter}
+                onChange={(e) => setPolicyStatusFilter(e.target.value)}
               >
-                <option value="">All</option>
-                {typeOfCaseOptions.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
+                <option value="">All Status</option>
+                <option value="DRAFT">Draft</option>
+                <option value="SENT TO FINANCE">Sent to Finance</option>
               </select>
             </div>
-            <div>
-              <label className="form-label small text-muted">Business Type</label>
-              <select
-                className="form-select"
-                value={policyBusinessFilter}
-                onChange={(e) => setPolicyBusinessFilter(e.target.value)}
-              >
-                <option value="">All</option>
-                {typeOfBusinessOptions.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="d-flex align-items-end">
+            <div className="col-md-3 d-grid">
               <button
-                type="button"
                 className="btn btn-outline-secondary"
                 onClick={() => {
-                  setPolicySearch('');
-                  setPolicyTypeFilter('');
-                  setPolicyBusinessFilter('');
+                  setPolicySearch("");
+                  setPolicyStatusFilter("");
                 }}
               >
                 Reset Filters
@@ -954,131 +1293,162 @@ function Placement() {
             </div>
           </div>
 
-          <button
-            className="btn btn-primary mb-3"
-            onClick={() => {
-              setEditingPolicy(null);
-              setPolicyForm({
-                ...initialPolicyForm,
-                transaction_number: generateTransactionNumber(),
-                type_of_case: 'New',
-                type_of_business: 'Direct',
-                currency: 'IDR'
-              });
-              setClientNameInput('');
-              setInsuranceNameInput('');
-              setSourceBusinessInput('');
-              setPreviousPolicyInput('');
-              setPolicyNumberValidation('');
-              setPlacingValidation('');
-              setQsValidation('');
-              setShowPolicyModal(true);
-            }}
-          >
-            ➕ Add Policy
-          </button>
-          <div className="table-responsive">
-            <table className="table table-hover table-sm">
-              <thead>
-                <tr>
-                  <th>TRX #</th>
-                  <th>Policy #</th>
-                  <th>Type</th>
-                  <th>Client</th>
-                  <th>Insurance</th>
-                  <th>Effective</th>
-                  <th>Expiry</th>
-                  <th>Premium</th>
-                  <th>Net Comm</th>
-                  <th>Docs</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-              {filteredPolicies.map((policy) => (
-                <tr key={policy.id}>
-                  <td className="fw-bold">{policy.transaction_number}</td>
-                  <td>{policy.policy_number || `POL-${policy.id}`}</td>
-                  <td>
-                    <span className="badge bg-secondary">{policy.type_of_case}</span>
-                  </td>
-                  <td>{clients.find((c) => c.id === policy.client_id)?.name || 'N/A'}</td>
-                  <td>{clients.find((c) => c.id === policy.insurance_id)?.name || 'N/A'}</td>
-                  <td>{policy.effective_date}</td>
-                  <td>{policy.expiry_date}</td>
-                  <td>
-                    {formatPremium(policy.premium_amount)} {policy.currency}
-                  </td>
-                  <td>{policy.commission_net_percent}%</td>
-                  <td>
-                    <button
-                      className="btn btn-sm btn-info"
-                      onClick={() => handleSelectPolicy(policy)}
-                    >
-                      📄
-                    </button>
-                  </td>
-                  <td>
-                    <div className="btn-group btn-group-sm">
-                      <button
-                        className="btn btn-warning"
-                        onClick={() => handleEditPolicy(policy)}
-                      >
-                        ✏️ Edit
-                      </button>
-                      <button
-                        className="btn btn-success"
-                        onClick={() => handleSendToFinance(policy)}
-                        title="Kirim ke Finance"
-                        disabled={policy.sent_to_finance} // ✅ sekarang aman, policy ada di scope
-                      >
-                        {policy.sent_to_finance ? '✅ Sent' : '💸 Finance'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+          {loading && <div className="text-muted">Loading...</div>}
 
-            </table>
-          </div>
-          {filteredPolicies.length === 0 && (
-            <div className="alert alert-info">📭 No policies found</div>
+          {!loading && filteredPolicies.length === 0 && (
+            <div className="alert alert-info">No policies found.</div>
+          )}
+
+          {!loading && filteredPolicies.length > 0 && (
+            <div className="table-responsive">
+              <table className="table table-sm align-middle">
+                <thead className="table-light">
+                  <tr>
+                    <th>Policy No</th>
+                    <th>Client</th>
+                    <th>Insurer</th>
+                    <th>COB</th>
+                    <th>Product</th>
+                    <th>Premium</th>
+                    <th>Status</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPolicies.map((p) => {
+                    const status = p.sent_to_finance
+                      ? "SENT TO FINANCE"
+                      : "DRAFT";
+                    return (
+                      <tr key={p.id}>
+                        <td>{p.policy_number || "-"}</td>
+                        <td>{getClientName(p.client_id)}</td>
+                        <td>{getClientName(p.insurance_id)}</td>
+                        <td>{getCobLabel(p.class_of_business_id)}</td>
+                        <td>{getProductLabel(p.product_id)}</td>
+                        <td>
+                          {p.premium_amount
+                            ? `${p.currency || "IDR"} ${Number(
+                                p.premium_amount
+                              ).toLocaleString()}`
+                            : "-"}
+                        </td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              status === "SENT TO FINANCE"
+                                ? "bg-info"
+                                : "bg-secondary"
+                            }`}
+                          >
+                            {status}
+                          </span>
+                        </td>
+                        <td className="text-end">
+                          <div className="btn-group btn-group-sm">
+                            <button
+                              className="btn btn-outline-secondary"
+                              onClick={() => {
+                                setEditingPolicy(p);
+                                setPolicyForm({
+                                  ...emptyPolicyForm,
+                                  ...p,
+                                });
+                                setShowPolicyModal(true);
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn btn-outline-primary"
+                              disabled={p.sent_to_finance}
+                              onClick={async () => {
+                                try {
+                                  setLoading(true);
+                                  await api.post(
+                                    `/placement/policies/${p.id}/send-to-finance`
+                                  );
+                                  setSuccess("Policy sent to Finance.");
+                                  const res = await api.get(
+                                    "/placement/policies"
+                                  );
+                                  const data = (
+                                    res.data.data?.policies ||
+                                    res.data.data ||
+                                    res.data ||
+                                    []
+                                  ).map((x) => ({
+                                    ...x,
+                                    class_of_business_id: x.class_of_business_id
+                                      ? String(x.class_of_business_id)
+                                      : "",
+                                    product_id: x.product_id
+                                      ? String(x.product_id)
+                                      : "",
+                                  }));
+                                  setPolicies(data);
+                                } catch (err) {
+                                  console.error(
+                                    "Error sending policy to finance:",
+                                    err
+                                  );
+                                  setError("Failed to send policy to Finance.");
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                            >
+                              Send to Finance
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
 
-      {/* === CLIENT MODAL === */}
+      {/* CLIENT MODAL */}
       {showClientModal && (
         <div
           className="modal fade show d-block"
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
+          style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1050 }}
         >
           <div className="modal-dialog modal-xl">
             <div className="modal-content">
               <div className="modal-header bg-primary text-white">
                 <h5 className="modal-title">
-                  {editingClient ? '✏️ Edit Client' : '➕ Add New Client'}
+                  {editingClient ? "✏️ Edit Client" : "➕ Add New Client"}
                 </h5>
                 <button
                   className="btn-close btn-close-white"
                   onClick={() => {
                     setShowClientModal(false);
-                    setEditingClient(null);
-                    setNameValidation('');
-                    setEmailValidation('');
+                    resetClientForm();
                   }}
                 ></button>
               </div>
-              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+              <div
+                className="modal-body"
+                style={{ maxHeight: "70vh", overflowY: "auto" }}
+              >
                 <form onSubmit={handleAddClient}>
                   <div className="row mb-3">
                     <div className="col-md-6 mb-3">
-                      <label className="form-label">Client ID (Auto-generated) *</label>
+                      <label className="form-label">
+                        Client ID (Auto-generated) *
+                      </label>
                       <input
                         type="text"
                         className="form-control"
-                        value={clientForm.id || generateClientId(clientForm.type_of_client)}
+                        value={
+                          clientForm.id ||
+                          generateClientId(clientForm.type_of_client)
+                        }
                         disabled
                       />
                     </div>
@@ -1088,7 +1458,10 @@ function Placement() {
                         className="form-select"
                         value={clientForm.type_of_client}
                         onChange={(e) =>
-                          setClientForm({ ...clientForm, type_of_client: e.target.value })
+                          setClientForm({
+                            ...clientForm,
+                            type_of_client: e.target.value,
+                          })
                         }
                         required
                       >
@@ -1103,7 +1476,7 @@ function Placement() {
                   </div>
 
                   <fieldset className="border p-3 mb-3">
-                    <legend className="w-auto px-2">Personal Information</legend>
+                    <legend className="w-auto px-2">Client Name</legend>
                     <div className="row">
                       <div className="col-md-2 mb-3">
                         <label className="form-label">Salutation</label>
@@ -1112,16 +1485,19 @@ function Placement() {
                           value={clientForm.salutation}
                           onChange={(e) =>
                             setClientForm(
-                              updateClientName({ ...clientForm, salutation: e.target.value })
+                              updateClientName({
+                                ...clientForm,
+                                salutation: e.target.value,
+                              })
                             )
                           }
                         >
                           <option value="">Select</option>
-                          {salutationOptions.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
+                          <option value="Mr">Mr</option>
+                          <option value="Mrs">Mrs</option>
+                          <option value="Ms">Ms</option>
+                          <option value="Dr">Dr</option>
+                          <option value="Prof">Prof</option>
                         </select>
                       </div>
                       <div className="col-md-3 mb-3">
@@ -1130,11 +1506,20 @@ function Placement() {
                           type="text"
                           className="form-control"
                           value={clientForm.first_name}
-                          onChange={(e) =>
-                            setClientForm(
-                              updateClientName({ ...clientForm, first_name: e.target.value })
-                            )
-                          }
+                          onChange={(e) => {
+                            const updated = updateClientName({
+                              ...clientForm,
+                              first_name: e.target.value,
+                            });
+                            setClientForm(updated);
+                            setNameValidation(
+                              validateClientName(
+                                updated.first_name,
+                                updated.mid_name,
+                                updated.last_name
+                              )
+                            );
+                          }}
                           required
                         />
                       </div>
@@ -1144,49 +1529,60 @@ function Placement() {
                           type="text"
                           className="form-control"
                           value={clientForm.mid_name}
-                          onChange={(e) =>
-                            setClientForm(
-                              updateClientName({ ...clientForm, mid_name: e.target.value })
-                            )
-                          }
+                          onChange={(e) => {
+                            const updated = updateClientName({
+                              ...clientForm,
+                              mid_name: e.target.value,
+                            });
+                            setClientForm(updated);
+                            setNameValidation(
+                              validateClientName(
+                                updated.first_name,
+                                updated.mid_name,
+                                updated.last_name
+                              )
+                            );
+                          }}
                         />
                       </div>
-                      <div className="col-md-3 mb-3">
+                      <div className="col-md-4 mb-3">
                         <label className="form-label">Last Name *</label>
                         <input
                           type="text"
                           className="form-control"
                           value={clientForm.last_name}
-                          onChange={(e) =>
-                            setClientForm(
-                              updateClientName({ ...clientForm, last_name: e.target.value })
-                            )
-                          }
+                          onChange={(e) => {
+                            const updated = updateClientName({
+                              ...clientForm,
+                              last_name: e.target.value,
+                            });
+                            setClientForm(updated);
+                            setNameValidation(
+                              validateClientName(
+                                updated.first_name,
+                                updated.mid_name,
+                                updated.last_name
+                              )
+                            );
+                          }}
                           required
                         />
                       </div>
                     </div>
-                    <div className="row">
-                      <div className="col-md-9 mb-3">
-                        <label className="form-label">Full Name (Auto)</label>
-                        <input
-                          type="text"
-                          className="form-control bg-light"
-                          value={clientForm.name}
-                          disabled
-                        />
-                      </div>
-                      <div className="col-md-3 mb-3">
-                        <label className="form-label">Validation</label>
-                        <div className="alert alert-warning py-1 px-2 small mb-0">
-                          {nameValidation}
-                        </div>
-                      </div>
+                    <div className="mb-2">
+                      <small className="text-muted">
+                        Full Name: <strong>{clientForm.name || "-"}</strong>
+                      </small>
                     </div>
+                    {nameValidation && (
+                      <div className="mb-2">
+                        <small className="text-muted">{nameValidation}</small>
+                      </div>
+                    )}
                   </fieldset>
 
                   <fieldset className="border p-3 mb-3">
-                    <legend className="w-auto px-2">Address Information</legend>
+                    <legend className="w-auto px-2">Address</legend>
                     <div className="mb-3">
                       <label className="form-label">Address Line 1</label>
                       <input
@@ -1194,7 +1590,10 @@ function Placement() {
                         className="form-control"
                         value={clientForm.address_1}
                         onChange={(e) =>
-                          setClientForm({ ...clientForm, address_1: e.target.value })
+                          setClientForm({
+                            ...clientForm,
+                            address_1: e.target.value,
+                          })
                         }
                       />
                     </div>
@@ -1205,7 +1604,10 @@ function Placement() {
                         className="form-control"
                         value={clientForm.address_2}
                         onChange={(e) =>
-                          setClientForm({ ...clientForm, address_2: e.target.value })
+                          setClientForm({
+                            ...clientForm,
+                            address_2: e.target.value,
+                          })
                         }
                       />
                     </div>
@@ -1216,7 +1618,10 @@ function Placement() {
                         className="form-control"
                         value={clientForm.address_3}
                         onChange={(e) =>
-                          setClientForm({ ...clientForm, address_3: e.target.value })
+                          setClientForm({
+                            ...clientForm,
+                            address_3: e.target.value,
+                          })
                         }
                       />
                     </div>
@@ -1232,7 +1637,10 @@ function Placement() {
                           className="form-control"
                           value={clientForm.phone_1}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, phone_1: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              phone_1: e.target.value,
+                            })
                           }
                         />
                       </div>
@@ -1243,31 +1651,10 @@ function Placement() {
                           className="form-control"
                           value={clientForm.phone_2}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, phone_2: e.target.value })
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="row">
-                      <div className="col-md-6 mb-3">
-                        <label className="form-label">Mobile 1</label>
-                        <input
-                          type="tel"
-                          className="form-control"
-                          value={clientForm.mobile_1}
-                          onChange={(e) =>
-                            setClientForm({ ...clientForm, mobile_1: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="col-md-6 mb-3">
-                        <label className="form-label">Mobile 2</label>
-                        <input
-                          type="tel"
-                          className="form-control"
-                          value={clientForm.mobile_2}
-                          onChange={(e) =>
-                            setClientForm({ ...clientForm, mobile_2: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              phone_2: e.target.value,
+                            })
                           }
                         />
                       </div>
@@ -1280,7 +1667,10 @@ function Placement() {
                           className="form-control"
                           value={clientForm.fax_1}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, fax_1: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              fax_1: e.target.value,
+                            })
                           }
                         />
                       </div>
@@ -1291,7 +1681,10 @@ function Placement() {
                           className="form-control"
                           value={clientForm.fax_2}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, fax_2: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              fax_2: e.target.value,
+                            })
                           }
                         />
                       </div>
@@ -1304,13 +1697,18 @@ function Placement() {
                           className="form-control"
                           value={clientForm.email}
                           onChange={(e) => {
-                            setClientForm({ ...clientForm, email: e.target.value });
+                            setClientForm({
+                              ...clientForm,
+                              email: e.target.value,
+                            });
                             validateEmail(e.target.value);
                           }}
                           required
                         />
                         {emailValidation && (
-                          <small className="d-block mt-1">{emailValidation}</small>
+                          <small className="d-block mt-1">
+                            {emailValidation}
+                          </small>
                         )}
                       </div>
                       <div className="col-md-6 mb-3">
@@ -1318,33 +1716,28 @@ function Placement() {
                         <input
                           type="text"
                           className="form-control"
-                          value={clientForm.contact}
+                          value={clientForm.contact_person}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, contact: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              contact_person: e.target.value,
+                            })
                           }
                         />
                       </div>
                     </div>
                     <div className="row">
                       <div className="col-md-6 mb-3">
-                        <label className="form-label">Contact Address</label>
+                        <label className="form-label">Contact Position</label>
                         <input
                           type="text"
                           className="form-control"
-                          value={clientForm.contact_address}
+                          value={clientForm.contact_position}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, contact_address: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="col-md-6 mb-3">
-                        <label className="form-label">Contact Phone</label>
-                        <input
-                          type="tel"
-                          className="form-control"
-                          value={clientForm.contact_phone}
-                          onChange={(e) =>
-                            setClientForm({ ...clientForm, contact_phone: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              contact_position: e.target.value,
+                            })
                           }
                         />
                       </div>
@@ -1359,104 +1752,68 @@ function Placement() {
                         <input
                           type="text"
                           className="form-control"
-                          value={clientForm.taxid}
+                          value={clientForm.tax_id}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, taxid: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              tax_id: e.target.value,
+                            })
                           }
                         />
                       </div>
-                      <div className="col-md-4 mb-3">
-                        <label className="form-label">Tax Name</label>
-                        <input
-                          type="text"
-                          className="form-control"
-                          value={clientForm.tax_name}
-                          onChange={(e) =>
-                            setClientForm({ ...clientForm, tax_name: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="col-md-4 mb-3">
+                      <div className="col-md-8 mb-3">
                         <label className="form-label">Tax Address</label>
                         <input
                           type="text"
                           className="form-control"
                           value={clientForm.tax_address}
                           onChange={(e) =>
-                            setClientForm({ ...clientForm, tax_address: e.target.value })
+                            setClientForm({
+                              ...clientForm,
+                              tax_address: e.target.value,
+                            })
                           }
                         />
                       </div>
                     </div>
                   </fieldset>
 
-                  <fieldset className="border p-3 mb-3">
-                    <legend className="w-auto px-2">Additional Information</legend>
-                    <div className="row">
-                      <div className="col-md-6 mb-3">
-                        <label className="form-label">Line of Business</label>
-                        <input
-                          type="text"
-                          className="form-control"
-                          value={clientForm.lob}
-                          onChange={(e) =>
-                            setClientForm({ ...clientForm, lob: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="col-md-6 mb-3">
-                        <label className="form-label">Special Flag</label>
-                        <div className="form-check">
-                          <input
-                            type="checkbox"
-                            className="form-check-input"
-                            id="specialFlag"
-                            checked={clientForm.special_flag}
-                            onChange={(e) =>
-                              setClientForm({
-                                ...clientForm,
-                                special_flag: e.target.checked
-                              })
-                            }
-                          />
-                          <label className="form-check-label" htmlFor="specialFlag">
-                            Mark as Special
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mb-3">
-                      <label className="form-label">Remarks</label>
-                      <textarea
-                        className="form-control"
-                        rows="3"
-                        value={clientForm.remarks}
-                        onChange={(e) =>
-                          setClientForm({ ...clientForm, remarks: e.target.value })
-                        }
-                      ></textarea>
-                    </div>
-                  </fieldset>
+                  <div className="mb-3">
+                    <label className="form-label">Remarks</label>
+                    <textarea
+                      className="form-control"
+                      rows="2"
+                      value={clientForm.remarks}
+                      onChange={(e) =>
+                        setClientForm({
+                          ...clientForm,
+                          remarks: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
 
-                  <div className="d-flex gap-2">
-                    <button type="submit" className="btn btn-primary" disabled={loading}>
-                      {loading
-                        ? '⏳ Saving...'
-                        : editingClient
-                        ? '✅ Update Client'
-                        : '✅ Add Client'}
-                    </button>
+                  <div className="d-flex justify-content-end">
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-secondary me-2"
                       onClick={() => {
                         setShowClientModal(false);
-                        setEditingClient(null);
-                        setNameValidation('');
-                        setEmailValidation('');
+                        resetClientForm();
                       }}
                     >
                       Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={loading}
+                    >
+                      {loading
+                        ? "Saving..."
+                        : editingClient
+                        ? "Update Client"
+                        : "Save Client"}
                     </button>
                   </div>
                 </form>
@@ -1466,54 +1823,177 @@ function Placement() {
         </div>
       )}
 
-      {/* === POLICY MODAL === */}
-      {showPolicyModal && (
-        <div
-          className="modal fade show d-block"
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1040 }}
-        >
-          <div className="modal-dialog modal-lg">
+      {/* PROPOSAL MODAL */}
+      {showProposalModal && (
+        <div className="modal fade show d-block" tabIndex="-1">
+          <div className="modal-dialog modal-lg modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header bg-primary text-white">
                 <h5 className="modal-title">
-                  {editingPolicy ? '✏️ Edit Policy' : '➕ Add New Policy'}
+                  {editingProposal ? "Edit Proposal" : "New Proposal"}
                 </h5>
                 <button
                   className="btn-close btn-close-white"
                   onClick={() => {
-                    setShowPolicyModal(false);
-                    setEditingPolicy(null);
-                    setClientNameInput('');
-                    setInsuranceNameInput('');
-                    setSourceBusinessInput('');
-                    setPreviousPolicyInput('');
-                    setPolicyNumberValidation('');
-                    setPlacingValidation('');
-                    setQsValidation('');
+                    setShowProposalModal(false);
+                    resetProposalForm();
                   }}
                 ></button>
               </div>
-              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-                <form onSubmit={handleSavePolicy}>
-                  <div className="row mb-3">
+              <div className="modal-body">
+                <form onSubmit={handleSaveProposal}>
+                  <div className="mb-3">
+                    <label className="form-label">TRX No</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={proposalForm.transaction_number}
+                      onChange={(e) =>
+                        setProposalForm({
+                          ...proposalForm,
+                          transaction_number: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+
+                  <div className="row">
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Transaction Number (Auto) *</label>
-                      <input
-                        type="text"
-                        className="form-control"
-                        value={policyForm.transaction_number}
-                        disabled
-                      />
-                    </div>
-                    <div className="col-md-4 mb-3">
-                      <label className="form-label">Type of Case *</label>
+                      <label className="form-label">Client</label>
                       <select
                         className="form-select"
-                        value={policyForm.type_of_case}
+                        value={proposalForm.client_id}
                         onChange={(e) =>
-                          setPolicyForm({ ...policyForm, type_of_case: e.target.value })
+                          setProposalForm({
+                            ...proposalForm,
+                            client_id: e.target.value,
+                          })
                         }
                         required
+                      >
+                        <option value="">Select Client</option>
+                        {getClientsByTypes("Client").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Source of Business</label>
+                      <select
+                        className="form-select"
+                        value={proposalForm.source_business_id}
+                        onChange={(e) =>
+                          setProposalForm({
+                            ...proposalForm,
+                            source_business_id: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Select Source</option>
+                        {getClientsByTypes("Partner Co-Broking", "Source of Business").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Sales Name</label>
+                      <select
+                        className="form-select"
+                        value={proposalForm.sales_id}
+                        onChange={(e) =>
+                          setProposalForm({
+                            ...proposalForm,
+                            sales_id: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Select Sales</option>
+                        {getClientsByTypes("Sales").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="row">
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Class of Business</label>
+                      <select
+                        className="form-select"
+                        value={proposalForm.class_of_business_id}
+                        onChange={(e) =>
+                          setProposalForm({
+                            ...proposalForm,
+                            class_of_business_id: e.target.value,
+                            product_id: "",
+                          })
+                        }
+                        required
+                      >
+                        <option value="">Select COB</option>
+                        {classOfBusiness.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label} ({c.code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-4 mb-3">
+                    <label className="form-label">Product</label>
+                    <select
+                      className="form-select"
+                      value={proposalForm.product_id}
+                      onChange={(e) =>
+                        setProposalForm({
+                          ...proposalForm,
+                          product_id: e.target.value,
+                        })
+                      }
+                      required
+                      disabled={!proposalForm.class_of_business_id}
+                    >
+                      <option value="">Select Product</option>
+                      {proposalProducts.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label} ({p.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Booking Date</label>
+                      <input
+                        type="date"
+                        className="form-control"
+                        value={proposalForm.booking_date || ""}
+                        onChange={(e) =>
+                          setProposalForm({
+                            ...proposalForm,
+                            effective_date: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="row">
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Type of Case</label>
+                      <select
+                        className="form-select"
+                        value={proposalForm.type_of_case}
+                        onChange={(e) =>
+                          setProposalForm({
+                            ...proposalForm,
+                            type_of_case: e.target.value,
+                          })
+                        }
                       >
                         {typeOfCaseOptions.map((opt) => (
                           <option key={opt} value={opt}>
@@ -1523,14 +2003,16 @@ function Placement() {
                       </select>
                     </div>
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Type of Business *</label>
+                      <label className="form-label">Business Type</label>
                       <select
                         className="form-select"
-                        value={policyForm.type_of_business}
+                        value={proposalForm.type_of_business}
                         onChange={(e) =>
-                          setPolicyForm({ ...policyForm, type_of_business: e.target.value })
+                          setProposalForm({
+                            ...proposalForm,
+                            type_of_business: e.target.value,
+                          })
                         }
-                        required
                       >
                         {typeOfBusinessOptions.map((opt) => (
                           <option key={opt} value={opt}>
@@ -1541,283 +2023,224 @@ function Placement() {
                     </div>
                   </div>
 
-                  {policyForm.type_of_case === 'Renewal' && (
-                    <div className="mb-3">
-                      <label className="form-label">Reference Previous Policy (Renewal From)</label>
-                      <div className="position-relative">
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="Search policy number or TRX..."
-                          value={previousPolicyInput}
-                          onChange={(e) => {
-                            setPreviousPolicyInput(e.target.value);
-                            setPreviousPolicyOpen(true);
-                          }}
-                          onFocus={() => setPreviousPolicyOpen(true)}
-                        />
-                        {previousPolicyOpen && (
-                          <div
-                            className="list-group mt-2 position-absolute w-100"
-                            style={{ zIndex: 1000, maxHeight: '150px', overflowY: 'auto' }}
-                          >
-                            {getPreviousPolicies(previousPolicyInput).map((p) => (
-                              <button
-                                key={p.id}
-                                type="button"
-                                className="list-group-item list-group-item-action text-start"
-                                onClick={() => {
-                                  setPolicyForm({ ...policyForm, reference_policy_id: p.id });
-                                  setPreviousPolicyInput(`${p.policy_number} (${p.transaction_number})`);
-                                  setPreviousPolicyOpen(false);
-                                }}
-                              >
-                                <strong>{p.policy_number}</strong> - {p.transaction_number}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <small className="text-muted">
-                        Ref:{' '}
-                        {policyForm.reference_policy_id
-                          ? policies.find((p) => p.id === policyForm.reference_policy_id)
-                              ?.policy_number
-                          : 'None'}
-                      </small>
-                    </div>
-                  )}
-
-                  <div className="row mb-3">
-                    <div className="col-md-4 mb-3">
-                      <label className="form-label">Policy Number</label>
+                  <div className="row">
+                    <div className="col-md-6 mb-3">
+                      <label className="form-label">Placing Slip No</label>
                       <div className="input-group">
                         <input
                           type="text"
                           className="form-control"
-                          value={policyForm.policy_number}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setPolicyForm({ ...policyForm, policy_number: value });
-                            validateUniquePolicyNumber(
-                              value,
-                              policyForm.policy_id || editingPolicy?.id
-                            );
-                          }}
-                          placeholder="Auto or manual"
+                          value={proposalForm.placing_slip_number || ""}
+                          onChange={(e) =>
+                            setProposalForm({
+                              ...proposalForm,
+                              placing_slip_number: e.target.value,
+                            })
+                          }
+                          placeholder="PS/ICIB/001/I/NB/PROD-2025"
                         />
                         <button
                           type="button"
                           className="btn btn-outline-secondary"
-                          onClick={generatePolicyNumber}
+                          onClick={() => generatePsOrQsForProposal("PS")}
                         >
                           Generate
                         </button>
                       </div>
-                      {policyNumberValidation && (
-                        <small className="d-block mt-1">{policyNumberValidation}</small>
-                      )}
                     </div>
-                    <div className="col-md-4 mb-3">
-                      <label className="form-label">Placing Slip Number</label>
+                    <div className="col-md-6 mb-3">
+                      <label className="form-label">Quotation Slip No</label>
                       <div className="input-group">
                         <input
                           type="text"
                           className="form-control"
-                          value={policyForm.placing_slip_number}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setPolicyForm({ ...policyForm, placing_slip_number: value });
-                            validatePlacingNumber(
-                              value,
-                              policyForm.policy_id || editingPolicy?.id
-                            );
-                          }}
-                          placeholder='PS/001/PD/PII/I/2025'
+                          value={proposalForm.qs_number || ""}
+                          onChange={(e) =>
+                            setProposalForm({
+                              ...proposalForm,
+                              qs_number: e.target.value,
+                            })
+                          }
+                          placeholder="QS/ICIB/001/I/NB/PROD-2025"
                         />
                         <button
                           type="button"
                           className="btn btn-outline-secondary"
-                          onClick={() => generateRefNumber('PS')}
+                          onClick={() => generatePsOrQsForProposal("QS")}
                         >
                           Generate
                         </button>
                       </div>
-                      {placingValidation && (
-                        <small className="d-block mt-1">{placingValidation}</small>
-                      )}
-                    </div>
-                    <div className="col-md-4 mb-3">
-                      <label className="form-label">Quotation Number</label>
-                      <div className="input-group">
-                        <input
-                          type="text"
-                          className="form-control"
-                          value={policyForm.qs_number}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setPolicyForm({ ...policyForm, qs_number: value });
-                            validateQsNumber(value, policyForm.policy_id || editingPolicy?.id);
-                          }}
-                          placeholder='QS/001/PD/PII/I/2025'
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary"
-                          onClick={() => generateRefNumber('QS')}
-                        >
-                          Generate
-                        </button>
-                      </div>
-                      {qsValidation && (
-                        <small className="d-block mt-1">{qsValidation}</small>
-                      )}
                     </div>
                   </div>
 
-                  <div className="row mb-3">
+                  <div className="mb-3">
+                    <label className="form-label">Remarks</label>
+                    <textarea
+                      className="form-control"
+                      rows="2"
+                      value={proposalForm.remarks || ""}
+                      onChange={(e) =>
+                        setProposalForm({
+                          ...proposalForm,
+                          remarks: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+
+                  <div className="d-flex justify-content-end">
+                    <button
+                      type="button"
+                      className="btn btn-secondary me-2"
+                      onClick={() => {
+                        setShowProposalModal(false);
+                        resetProposalForm();
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={loading}
+                    >
+                      {loading
+                        ? "Saving..."
+                        : editingProposal
+                        ? "Update Proposal"
+                        : "Save Proposal"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POLICY MODAL */}
+      {showPolicyModal && (
+        <div className="modal fade show d-block" tabIndex="-1">
+          <div className="modal-dialog modal-lg modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header bg-primary text-white">
+                <h5 className="modal-title">
+                  {editingPolicy ? "Edit Policy" : "New Policy"}
+                </h5>
+                <button
+                  className="btn-close btn-close-white"
+                  onClick={() => {
+                    setShowPolicyModal(false);
+                    resetPolicyForm();
+                  }}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <form onSubmit={handleSavePolicy}>
+                  <div className="mb-3">
+                    <label className="form-label">TRX No (optional)</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={policyForm.transaction_number || ""}
+                      onChange={(e) =>
+                        setPolicyForm({
+                          ...policyForm,
+                          transaction_number: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+
+                  <div className="row">
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Client Name (Policy Holder)</label>
-                      <div className="position-relative">
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="Type to search..."
-                          value={clientNameInput}
-                          onChange={(e) => {
-                            setClientNameInput(e.target.value);
-                            setClientNameOpen(true);
-                          }}
-                          onFocus={() => setClientNameOpen(true)}
-                        />
-                        {clientNameOpen && (
-                          <div
-                            className="list-group mt-2 position-absolute w-100"
-                            style={{ zIndex: 1000, maxHeight: '150px', overflowY: 'auto' }}
-                          >
-                            {filterAutocomplete(
-                              getClientsByType('Policy Holder'),
-                              clientNameInput
-                            ).map((c) => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                className="list-group-item list-group-item-action text-start"
-                                onClick={() => {
-                                  setPolicyForm({ ...policyForm, client_id: c.id });
-                                  setClientNameInput(c.name);
-                                  setClientNameOpen(false);
-                                }}
-                              >
-                                {c.name} <br />
-                                <small>{c.id}</small>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <small className="text-muted">
-                        Selected: {clients.find((c) => c.id === policyForm.client_id)?.name || 'None'}
-                      </small>
+                      <label className="form-label">Client</label>
+                      <select
+                        className="form-select"
+                        value={policyForm.client_id}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            client_id: e.target.value,
+                          })
+                        }
+                        required
+                      >
+                        <option value="">Select Client</option>
+                        {getClientsByTypes("Client").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Insurance Name</label>
-                      <div className="position-relative">
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="Type to search..."
-                          value={insuranceNameInput}
-                          onChange={(e) => {
-                            setInsuranceNameInput(e.target.value);
-                            setInsuranceNameOpen(true);
-                          }}
-                          onFocus={() => setInsuranceNameOpen(true)}
-                        />
-                        {insuranceNameOpen && (
-                          <div
-                            className="list-group mt-2 position-absolute w-100"
-                            style={{ zIndex: 1000, maxHeight: '150px', overflowY: 'auto' }}
-                          >
-                            {filterAutocomplete(
-                              getClientsByType('Insurance'),
-                              insuranceNameInput
-                            ).map((c) => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                className="list-group-item list-group-item-action text-start"
-                                onClick={() => {
-                                  setPolicyForm({ ...policyForm, insurance_id: c.id });
-                                  setInsuranceNameInput(c.name);
-                                  setInsuranceNameOpen(false);
-                                }}
-                              >
-                                {c.name} <br />
-                                <small>{c.id}</small>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <small className="text-muted">
-                        Selected:{' '}
-                        {clients.find((c) => c.id === policyForm.insurance_id)?.name || 'None'}
-                      </small>
+                      <label className="form-label">Insurer</label>
+                      <select
+                        className="form-select"
+                        value={policyForm.insurance_id}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            insurance_id: e.target.value,
+                          })
+                        }
+                        required
+                      >
+                        <option value="">Select Insurer</option>
+                        {getClientsByTypes("Insurance").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="col-md-4 mb-3">
                       <label className="form-label">Source of Business</label>
-                      <div className="position-relative">
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="Type to search..."
-                          value={sourceBusinessInput}
-                          onChange={(e) => {
-                            setSourceBusinessInput(e.target.value);
-                            setSourceBusinessOpen(true);
-                          }}
-                          onFocus={() => setSourceBusinessOpen(true)}
-                        />
-                        {sourceBusinessOpen && (
-                          <div
-                            className="list-group mt-2 position-absolute w-100"
-                            style={{ zIndex: 1000, maxHeight: '150px', overflowY: 'auto' }}
-                          >
-                            {filterAutocomplete(
-                              getClientsByType('Source of Business').concat(
-                                getClientsByType('Partner Co-Broking')
-                              ),
-                              sourceBusinessInput
-                            ).map((c) => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                className="list-group-item list-group-item-action text-start"
-                                onClick={() => {
-                                  setPolicyForm({ ...policyForm, source_business_id: c.id });
-                                  setSourceBusinessInput(c.name);
-                                  setSourceBusinessOpen(false);
-                                }}
-                              >
-                                {c.name} <br />
-                                <small>{c.id}</small>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <small className="text-muted">
-                        Selected:{' '}
-                        {clients.find((c) => c.id === policyForm.source_business_id)?.name ||
-                          'None'}
-                      </small>
+                      <select
+                        className="form-select"
+                        value={policyForm.source_business_id}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            source_business_id: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Select Source</option>
+                        {getClientsByTypes("Partner Co-Broking","Source of Business").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
                   <div className="row">
-                    <div className="col-md-6 mb-3">
-                      <label className="form-label">Class of Business *</label>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Sales Name</label>
+                      <select
+                        className="form-select"
+                        value={policyForm.sales_id}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            sales_id: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">Select Sales</option>
+                        {getClientsByTypes("Sales").map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Class of Business</label>
                       <select
                         className="form-select"
                         value={policyForm.class_of_business_id}
@@ -1825,403 +2248,345 @@ function Placement() {
                           setPolicyForm({
                             ...policyForm,
                             class_of_business_id: e.target.value,
-                            product_id: ''
+                            product_id: "",
                           })
                         }
                         required
                       >
-                        <option value="">Select Class</option>
-                        {classOfBusinessOptions.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
+                        <option value="">Select COB</option>
+                        {classOfBusiness.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label} ({c.code})
                           </option>
                         ))}
                       </select>
                     </div>
-                    <div className="col-md-6 mb-3">
-                      <label className="form-label">Product Name *</label>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Product</label>
                       <select
                         className="form-select"
                         value={policyForm.product_id}
                         onChange={(e) =>
-                          setPolicyForm({ ...policyForm, product_id: e.target.value })
+                          setPolicyForm({
+                            ...policyForm,
+                            product_id: e.target.value,
+                          })
                         }
                         required
                         disabled={!policyForm.class_of_business_id}
                       >
                         <option value="">Select Product</option>
-                        {policyForm.class_of_business_id &&
-                          productNameOptions[policyForm.class_of_business_id]?.map((prod) => (
-                            <option key={prod} value={prod}>
-                              {prod}
-                            </option>
-                          ))}
+                        {policyProducts.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label} ({p.code})
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
 
                   <div className="row">
-                    <div className="col-md-6 mb-3">
-                      <label className="form-label">Effective Date *</label>
-                      <input
-                        type="date"
-                        className="form-control"
-                        value={policyForm.effective_date}
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Type of Case</label>
+                      <select
+                        className="form-select"
+                        value={policyForm.type_of_case}
                         onChange={(e) =>
                           setPolicyForm({
                             ...policyForm,
-                            effective_date: e.target.value,
-                            expiry_date: calculateExpiryDate(e.target.value)
+                            type_of_case: e.target.value,
                           })
                         }
-                        required
-                      />
-                    </div>
-                    <div className="col-md-6 mb-3">
-                      <label className="form-label">Expiry Date * (Auto: 1 year)</label>
-                      <input
-                        type="date"
-                        className="form-control"
-                        value={policyForm.expiry_date}
-                        onChange={(e) =>
-                          setPolicyForm({ ...policyForm, expiry_date: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="row">
-                    <div className="col-md-6 mb-3">
-                      <label className="form-label">Currency *</label>
-                      <select
-                        className="form-select"
-                        value={policyForm.currency}
-                        onChange={(e) =>
-                          setPolicyForm({ ...policyForm, currency: e.target.value })
-                        }
-                        required
                       >
-                        {currencyOptions.map((opt) => (
+                        {typeOfCaseOptions.map((opt) => (
                           <option key={opt} value={opt}>
                             {opt}
                           </option>
                         ))}
                       </select>
                     </div>
-                    <div className="col-md-6 mb-3">
-                      <label className="form-label">
-                        Premium Amount * ({policyForm.currency})
-                      </label>
-                      <input
-                        type="text"
-                        className="form-control"
-                        value={policyForm.premium_amount}
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Business Type</label>
+                      <select
+                        className="form-select"
+                        value={policyForm.type_of_business}
                         onChange={(e) =>
-                          setPolicyForm({ ...policyForm, premium_amount: e.target.value })
+                          setPolicyForm({
+                            ...policyForm,
+                            type_of_business: e.target.value,
+                          })
                         }
-                        placeholder="0.00"
-                        required
-                      />
-                      <small className="text-muted">Format: #,##0.00</small>
+                      >
+                        {typeOfBusinessOptions.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
                     </div>
+                    
                   </div>
 
                   <div className="row">
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Gross Commission % *</label>
+                      <label className="form-label">Booking Date</label>
                       <input
-                        type="number"
-                        step="0.01"
+                        type="date"
                         className="form-control"
-                        value={policyForm.commission_gross}
-                        onChange={(e) =>
-                          setPolicyForm({ ...policyForm, commission_gross: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div className="col-md-4 mb-3">
-                      <label className="form-label">Comm to Source of Business % *</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="form-control"
-                        value={policyForm.commission_to_source}
+                        value={policyForm.booking_date || ""}
                         onChange={(e) =>
                           setPolicyForm({
                             ...policyForm,
-                            commission_to_source: e.target.value
+                            booking_date: e.target.value,
                           })
                         }
-                        required
                       />
                     </div>
                     <div className="col-md-4 mb-3">
-                      <label className="form-label">Net Commission % (Auto-calculated)</label>
+                      <label className="form-label">Effective Date</label>
                       <input
-                        type="text"
-                        className="form-control bg-light"
-                        value={calculateNetCommission(
-                          policyForm.commission_gross,
-                          policyForm.commission_to_source
-                        )}
-                        disabled
+                        type="date"
+                        className="form-control"
+                        value={policyForm.effective_date || ""}
+                        onChange={(e) =>
+                          handlePolicyEffectiveChange(e.target.value)
+                        }
                       />
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Expiry Date</label>
+                      <input
+                        type="date"
+                        className="form-control"
+                        value={policyForm.expiry_date || ""}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            expiry_date: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    
+                  </div>
+
+                  <div className="row">
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Placing Slip No</label>
+                      <div className="input-group">
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={policyForm.placing_slip_number || ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setPolicyForm({
+                              ...policyForm,
+                              placing_slip_number: value,
+                            });
+                            validatePlacingNumber(
+                              value,
+                              policyForm.id || editingPolicy?.id || null
+                            );
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary"
+                          onClick={() => generatePsOrQsForPolicy("PS")}
+                        >
+                          Generate
+                        </button>
+                      </div>
+                      {placingValidation && (
+                        <small className="text-danger">
+                          {placingValidation}
+                        </small>
+                      )}
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Quotation Slip No</label>
+                      <div className="input-group">
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={policyForm.qs_number || ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setPolicyForm({
+                              ...policyForm,
+                              qs_number: value,
+                            });
+                            validateQsNumber(
+                              value,
+                              policyForm.id || editingPolicy?.id || null
+                            );
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary"
+                          onClick={() => generatePsOrQsForPolicy("QS")}
+                        >
+                          Generate
+                        </button>
+                      </div>
+                      {qsValidation && (
+                        <small className="text-danger">{qsValidation}</small>
+                      )}
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Policy No</label>
+                      <div className="input-group">
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={policyForm.policy_number || ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setPolicyForm({
+                              ...policyForm,
+                              policy_number: value,
+                            });
+                            validateUniquePolicyNumber(
+                              value,
+                              policyForm.id || editingPolicy?.id || null
+                            );
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary"
+                          onClick={generatePolicyNumberForPolicy}
+                        >
+                          Generate
+                        </button>
+                      </div>
+                      {policyNumberValidation && (
+                        <small className="text-danger">
+                          {policyNumberValidation}
+                        </small>
+                      )}
                     </div>
                   </div>
 
-                  <button type="submit" className="btn btn-primary" disabled={loading}>
-                    {loading
-                      ? '⏳ Saving...'
-                      : editingPolicy
-                      ? '✅ Update Policy'
-                      : '✅ Create Policy'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary ms-2"
-                    onClick={() => {
-                      setShowPolicyModal(false);
-                      setEditingPolicy(null);
-                      setClientNameInput('');
-                      setInsuranceNameInput('');
-                      setSourceBusinessInput('');
-                      setPreviousPolicyInput('');
-                      setPolicyNumberValidation('');
-                      setPlacingValidation('');
-                      setQsValidation('');
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </form>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+                  <div className="row">
+                    <div className="col-md-2 mb-3">
+                      <label className="form-label">Currency</label>
+                      <select
+                        className="form-select"
+                        value={policyForm.currency || "IDR"}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            currency: e.target.value,
+                          })
+                        }
+                      >
+                        {CURRENCIES.map((cur) => (
+                          <option key={cur} value={cur}>
+                            {cur}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">Premium Amount</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        value={policyForm.premium_amount || ""}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            premium_amount: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    </div>
 
-      {/* === DOCUMENTS LIST MODAL === */}
-      {selectedPolicy && (
-        <div
-          className="modal fade show d-block"
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1040 }}
-        >
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content">
-              <div className="modal-header bg-primary text-white">
-                <h5 className="modal-title">
-                  📄 Documents for Policy #{selectedPolicy.policy_number}
-                </h5>
-                <button
-                  className="btn-close btn-close-white"
-                  onClick={() => setSelectedPolicy(null)}
-                ></button>
-              </div>
-              <div className="modal-body">
-                <button
-                  className="btn btn-sm btn-success mb-3"
-                  onClick={() => {
-                    setDocForm({
-                      policy_id: selectedPolicy.id,
-                      document_type: 'general',
-                      file_name: '',
-                      file: null,
-                      description: ''
-                    });
-                    setShowDocModal(true);
-                  }}
-                >
-                  ➕ Upload Document
-                </button>
-                <div className="table-responsive">
-                  <table className="table table-sm">
-                    <thead>
-                      <tr>
-                        <th>File Name</th>
-                        <th>Type</th>
-                        <th>Size</th>
-                        <th>Description</th>
-                        <th>Uploaded</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {policyDocuments.map((doc) => (
-                        <tr key={doc.id}>
-                          <td>{doc.file_name}</td>
-                          <td>
-                            <span className="badge bg-info">{doc.document_type}</span>
-                          </td>
-                          <td>
-                            {doc.file_size ? (doc.file_size / 1024).toFixed(2) : '-'} KB
-                          </td>
-                          <td>{doc.description}</td>
-                          <td>
-                            {doc.uploaded_at
-                              ? new Date(doc.uploaded_at).toLocaleDateString()
-                              : '-'}
-                          </td>
-                          <td className="d-flex gap-1">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline-secondary"
-                              onClick={() => handlePreviewDocument(doc)}
-                              title="Preview"
-                            >
-                              👁️
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline-primary"
-                              onClick={() => handleDownloadDocument(doc)}
-                              title="Download"
-                            >
-                              ⬇️
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              onClick={() => handleDeleteDocument(doc.id)}
-                              title="Delete"
-                            >
-                              🗑️
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {policyDocuments.length === 0 && (
-                  <div className="alert alert-info">No documents</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* === DOCUMENT UPLOAD MODAL === */}
-      {showDocModal && (
-        <div
-          className="modal fade show d-block"
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1040 }}
-        >
-          <div className="modal-dialog">
-            <div className="modal-content">
-              <div className="modal-header bg-primary text-white">
-                <h5 className="modal-title">➕ Upload Document</h5>
-                <button
-                  className="btn-close btn-close-white"
-                  onClick={() => setShowDocModal(false)}
-                ></button>
-              </div>
-              <div className="modal-body">
-                <form onSubmit={handleAddDocument}>
-                  <div className="mb-3">
-                    <label className="form-label">Document Type *</label>
-                    <select
-                      className="form-select"
-                      value={docForm.document_type}
-                      onChange={(e) =>
-                        setDocForm({ ...docForm, document_type: e.target.value })
-                      }
-                      required
-                    >
-                      <option value="general">General</option>
-                      <option value="quotation">Quotation</option>
-                      <option value="proposal">Proposal</option>
-                      <option value="certificate">Certificate</option>
-                      <option value="endorsement">Endorsement</option>
-                      <option value="invoice">Invoice</option>
-                    </select>
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Browse File *</label>
+                  <div className="row">
+                    <div className="col-md-3 mb-3">
+                      <label className="form-label">Commission Gross</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        value={policyForm.commission_gross || ""}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            commission_gross: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="col-md-3 mb-3">
+                      <label className="form-label">Commission to Source</label>
+                      <input
+                        type="number"
+                        className="form-control"
+                        value={policyForm.commission_to_source || ""}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            commission_to_source: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="col-md-3 mb-3">
+                    <label className="form-label">Net Commission (amount)</label>
                     <input
-                      type="file"
+                      type="text"
                       className="form-control"
-                      onChange={(e) =>
-                        setDocForm({
-                          ...docForm,
-                          file: e.target.files[0],
-                          file_name: e.target.files[0]?.name
-                        })
-                      }
-                      required
+                      value={policyForm.commission_net_percent || ""}
+                      readOnly
                     />
-                    <small className="text-muted">
-                      File: {docForm.file_name || 'No file selected'}
-                    </small>
                   </div>
+                  </div>
+
+                  
+
                   <div className="mb-3">
-                    <label className="form-label">Description</label>
+                    <label className="form-label">Remarks</label>
                     <textarea
                       className="form-control"
-                      value={docForm.description}
+                      rows="2"
+                      value={policyForm.remarks || ""}
                       onChange={(e) =>
-                        setDocForm({ ...docForm, description: e.target.value })
+                        setPolicyForm({
+                          ...policyForm,
+                          remarks: e.target.value,
+                        })
                       }
-                      rows="3"
-                    ></textarea>
+                    />
                   </div>
-                  <button type="submit" className="btn btn-primary" disabled={loading}>
-                    {loading ? '⏳ Uploading...' : '✅ Upload'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary ms-2"
-                    onClick={() => setShowDocModal(false)}
-                  >
-                    Cancel
-                  </button>
+
+                  <div className="d-flex justify-content-end">
+                    <button
+                      type="button"
+                      className="btn btn-secondary me-2"
+                      onClick={() => {
+                        setShowPolicyModal(false);
+                        resetPolicyForm();
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={loading}
+                    >
+                      {loading
+                        ? "Saving..."
+                        : editingPolicy
+                        ? "Update Policy"
+                        : "Save Policy"}
+                    </button>
+                  </div>
                 </form>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* === DOCUMENT PREVIEW MODAL === */}
-      {showPreviewModal && (
-        <div
-          className="modal fade show d-block"
-          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1055 }}
-        >
-          <div className="modal-dialog modal-xl">
-            <div className="modal-content">
-              <div className="modal-header bg-primary text-white">
-                <h5 className="modal-title">Preview: {previewDocName}</h5>
-                <button
-                  className="btn-close btn-close-white"
-                  onClick={() => {
-                    if (previewUrl && previewIsBlob) {
-                      window.URL.revokeObjectURL(previewUrl);
-                    }
-                    setShowPreviewModal(false);
-                    setPreviewUrl(null);
-                    setPreviewIsBlob(false);
-                  }}
-                ></button>
-              </div>
-              <div className="modal-body" style={{ height: '75vh' }}>
-                {previewUrl ? (
-                  <iframe
-                    src={previewUrl}
-                    title={previewDocName}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      border: 'none',
-                      borderRadius: '4px'
-                    }}
-                  />
-                ) : (
-                  <div className="alert alert-info mb-0">
-                    Preview not available for this document.
-                  </div>
-                )}
               </div>
             </div>
           </div>
