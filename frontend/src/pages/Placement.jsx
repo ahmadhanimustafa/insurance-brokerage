@@ -331,6 +331,7 @@ function Placement() {
         const proposalData = (proposalRes.data.data || proposalRes.data || [])
           .map((p) => ({
             ...p,
+            booking_date: p.booking_date || "",
             class_of_business_id: p.class_of_business_id
               ? String(p.class_of_business_id)
               : "",
@@ -941,10 +942,10 @@ function Placement() {
     const insurerName = getClientName(p.insurance_id);
     const matchesStatus =
       !policyStatusFilter || p.sent_to_finance
-        ? policyStatusFilter === "SENT_TO_FINANCE"
+        ? policyStatusFilter === "SENT TO FINANCE"
         : policyStatusFilter === "DRAFT";
 
-    const statusString = p.sent_to_finance ? "SENT_TO_FINANCE" : "DRAFT";
+    const statusString = p.sent_to_finance ? "SENT TO FINANCE" : "DRAFT";
 
     const matchesSearch =
       !term ||
@@ -1196,7 +1197,7 @@ function Placement() {
                       <td>{getClientName(p.sales_id)}</td>
                       <td>{getCobLabel(p.class_of_business_id)}</td>
                       <td>{getProductLabel(p.product_id)}</td>
-                      <td>{p.booking_date_date || "-"}</td>
+                      <td>{p.booking_date || "-"}</td>
                       <td>{p.placing_slip_number || "-"}</td>
                       <td>{p.qs_number || "-"}</td>
                       <td>
@@ -1975,7 +1976,7 @@ function Placement() {
                         onChange={(e) =>
                           setProposalForm({
                             ...proposalForm,
-                            effective_date: e.target.value,
+                            booking_date: e.target.value,
                           })
                         }
                       />

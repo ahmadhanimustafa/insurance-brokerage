@@ -23,7 +23,7 @@ app.use('/api/placement', require('./routes/placement')); // ✅ Clients, Polici
 app.use('/api/finance', require('./routes/finance'));     // ✅ Finance Module
 app.use('/api/endorsement', require('./routes/endorsement')); // ✅ Endorsement Module
 app.use('/api/lookups', require('./routes/lookups'));
-app.use('/api/proposal', require('./routes/proposal'));   // ✅ Proposal Module
+//app.use('/api/proposal', require('./routes/proposal'));   // ✅ Proposal Module
 
 // Error handling
 app.use((err, req, res, next) => {
