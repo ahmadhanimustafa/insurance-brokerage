@@ -700,11 +700,11 @@ function Placement() {
     try {
       const payload = {
         ...clientForm,
-        id: clientForm.id || generateClientId(clientForm.type_of_client),
+        id: clientForm.client_id || generateClientId(clientForm.type_of_client),
       };
 
       if (editingClient) {
-        await api.put(`/placement/clients/${editingClient.id}`, payload);
+        await api.put(`/placement/clients/${editingClient.client_id}`, payload);
         setSuccess("Client updated.");
       } else {
         await api.post("/placement/clients", payload);
@@ -1084,7 +1084,7 @@ function Placement() {
                 <tbody>
                   {filteredClients.map((c) => (
                     <tr key={c.id}>
-                      <td>{c.id}</td>
+                      <td>{c.client_id}</td>
                       <td>{c.name}</td>
                       <td>{c.type_of_client}</td>
                       <td>{c.email}</td>
@@ -1447,7 +1447,7 @@ function Placement() {
                         type="text"
                         className="form-control"
                         value={
-                          clientForm.id ||
+                          clientForm.client_id ||
                           generateClientId(clientForm.type_of_client)
                         }
                         disabled

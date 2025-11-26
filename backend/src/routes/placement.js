@@ -1,42 +1,110 @@
 // backend/src/routes/placement.js
-// Unified Placement module: Clients + Proposals + Policies (+ simple Documents stub)
-// In-memory store – good enough for local/dev
+// DB-backed Placement: Clients + Proposals + Policies
+// Compatible with current Placement.jsx API/field names.
 
 const express = require('express');
 const router = express.Router();
+const db = require('../utils/db'); // adjust if your path/name is different
 
-// In-memory data stores
-let clients = [];
-let proposals = [];
-let policies = [];
-let documents = [];
-
-let nextClientId = 1;
-let nextProposalId = 1;
-let nextPolicyId = 1;
-let nextDocumentId = 1;
-
-// Helper: normalize ID comparison
+// helper: uniform ID compare
 const sameId = (a, b) => String(a) === String(b);
 
-// ===========================
-// CLIENTS ENDPOINTS
-// ===========================
+// ------------------------------
+// CLIENTS
+// ------------------------------
 
-router.get('/clients', (req, res) => {
-  return res.json({
-    success: true,
-    data: clients,
-  });
+// GET /api/placement/clients
+router.get('/clients', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `
+      SELECT
+        id,
+        client_id,
+        name,
+        email,
+        contact_person,
+        contact_address,
+        contact_phone,
+        taxid,
+        tax_name,
+        tax_address,
+        lob,
+        type_of_client,
+        special_flag,
+        remarks,
+        created_at,
+        updated_at
+      FROM clients
+      ORDER BY id DESC
+      `
+    );
+
+    // Map DB columns back into the shape Placement.jsx expects for listing / dropdowns.
+    const data = rows.map((r) => ({
+      id: r.id, // used as FK everywhere
+      type_of_client: r.type_of_client,
+      salutation: "",      // not stored; kept only in UI
+      first_name: "",      // not stored; we store full name in `name`
+      mid_name: "",
+      last_name: "",
+      name: r.name,
+      address_1: r.contact_address || "",
+      address_2: "",
+      address_3: "",
+      phone_1: r.contact_phone || "",
+      phone_2: "",
+      fax_1: "",
+      fax_2: "",
+      email: r.email || "",
+      contact_person: r.contact_person || "",
+      contact_position: "",
+      tax_id: r.taxid || "",
+      tax_address: r.tax_address || "",
+      remarks: r.remarks || "",
+      client_code: r.client_id || null,
+      special_flag: r.special_flag,
+      lob: r.lob,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    }));
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Error loading clients:', err);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message },
+    });
+  }
 });
 
-// POST /placement/clients
-router.post('/clients', (req, res) => {
+// POST /api/placement/clients
+router.post('/clients', async (req, res) => {
   try {
     const body = req.body || {};
 
-    const type_of_client = body.type_of_client || body.type || '';
-    const name = body.name || '';
+    const {
+      type_of_client,
+      salutation,
+      first_name,
+      mid_name,
+      last_name,
+      name,
+      address_1,
+      address_2,
+      address_3,
+      phone_1,
+      phone_2,
+      fax_1,
+      fax_2,
+      email,
+      contact_person,
+      contact_position,
+      tax_id,
+      tax_address,
+      remarks,
+    } = body;
 
     if (!type_of_client || !name) {
       return res.status(400).json({
@@ -48,43 +116,119 @@ router.post('/clients', (req, res) => {
       });
     }
 
-    const newClient = {
-      id: body.id || String(nextClientId++),
+    const contact_address = [address_1, address_2, address_3]
+      .filter(Boolean)
+      .join('\n');
 
-      type_of_client,
-      salutation: body.salutation || '',
-      first_name: body.first_name || '',
-      mid_name: body.mid_name || '',
-      last_name: body.last_name || '',
+    // main phone
+    const contact_phone = phone_1 || null;
+
+    // stuff we don't have direct columns for -> append into remarks
+    let mergedRemarks = remarks || '';
+    if (phone_2) mergedRemarks += `\nAlt phone: ${phone_2}`;
+    if (fax_1) mergedRemarks += `\nFax 1: ${fax_1}`;
+    if (fax_2) mergedRemarks += `\nFax 2: ${fax_2}`;
+    if (contact_position) mergedRemarks += `\nContact position: ${contact_position}`;
+    if (salutation || first_name || last_name) {
+      mergedRemarks += `\nName parts: ${[
+        salutation,
+        first_name,
+        mid_name,
+        last_name,
+      ]
+        .filter(Boolean)
+        .join(' ')}`;
+    }
+
+    // Frontend generates a pretty code (CL-001 etc) in payload.id.
+    // We'll store that in clients.client_id, but primary key is the serial `id`.
+    const clientCode = body.id || null;
+
+    const insertSql = `
+      INSERT INTO clients (
+        name,
+        email,
+        contact_person,
+        contact_address,
+        contact_phone,
+        taxid,
+        tax_name,
+        tax_address,
+        lob,
+        type_of_client,
+        special_flag,
+        remarks,
+        client_id
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12)
+      RETURNING
+        id,
+        client_id,
+        name,
+        email,
+        contact_person,
+        contact_address,
+        contact_phone,
+        taxid,
+        tax_name,
+        tax_address,
+        lob,
+        type_of_client,
+        special_flag,
+        remarks,
+        created_at,
+        updated_at
+    `;
+
+    const params = [
       name,
+      email || null,
+      contact_person || null,
+      contact_address || null,
+      contact_phone,
+      tax_id || null,
+      null, // tax_name not provided from UI
+      tax_address || null,
+      null, // lob
+      type_of_client,
+      mergedRemarks || null,
+      clientCode,
+    ];
 
-      address_1: body.address_1 || '',
-      address_2: body.address_2 || '',
-      address_3: body.address_3 || '',
+    const { rows } = await db.query(insertSql, params);
+    const r = rows[0];
 
-      phone_1: body.phone_1 || '',
-      phone_2: body.phone_2 || '',
-      fax_1: body.fax_1 || '',
-      fax_2: body.fax_2 || '',
-
-      email: body.email || '',
-      contact_person: body.contact_person || '',
-      contact_position: body.contact_position || '',
-
-      tax_id: body.tax_id || '',
-      tax_address: body.tax_address || '',
-
-      remarks: body.remarks || '',
-
-      created_at: new Date(),
-      updated_at: new Date(),
+    const responseClient = {
+      id: r.id,
+      type_of_client: r.type_of_client,
+      salutation: '',
+      first_name: '',
+      mid_name: '',
+      last_name: '',
+      name: r.name,
+      address_1: r.contact_address || '',
+      address_2: '',
+      address_3: '',
+      phone_1: r.contact_phone || '',
+      phone_2: '',
+      fax_1: '',
+      fax_2: '',
+      email: r.email || '',
+      contact_person: r.contact_person || '',
+      contact_position: '',
+      tax_id: r.taxid || '',
+      tax_address: r.tax_address || '',
+      remarks: r.remarks || '',
+      client_code: r.client_id || null,
+      special_flag: r.special_flag,
+      lob: r.lob,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
     };
-
-    clients.push(newClient);
 
     return res.json({
       success: true,
-      data: newClient,
+      data: responseClient,
       message: 'Client created successfully',
     });
   } catch (err) {
@@ -96,33 +240,141 @@ router.post('/clients', (req, res) => {
   }
 });
 
-router.put('/clients/:id', (req, res) => {
+// PUT /api/placement/clients/:id
+router.put('/clients/:id', async (req, res) => {
   try {
-    const clientId = req.params.id;
-    const idx = clients.findIndex((c) => sameId(c.id, clientId));
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid client id' },
+      });
+    }
 
-    if (idx === -1) {
+    const body = req.body || {};
+    const {
+      type_of_client,
+      first_name,
+      mid_name,
+      last_name,
+      name,
+      address_1,
+      address_2,
+      address_3,
+      phone_1,
+      phone_2,
+      fax_1,
+      fax_2,
+      email,
+      contact_person,
+      contact_position,
+      tax_id,
+      tax_address,
+      remarks,
+    } = body;
+
+    const contact_address = [address_1, address_2, address_3]
+      .filter(Boolean)
+      .join('\n');
+    const contact_phone = phone_1 || null;
+
+    let mergedRemarks = remarks || '';
+    if (phone_2) mergedRemarks += `\nAlt phone: ${phone_2}`;
+    if (fax_1) mergedRemarks += `\nFax 1: ${fax_1}`;
+    if (fax_2) mergedRemarks += `\nFax 2: ${fax_2}`;
+    if (contact_position) mergedRemarks += `\nContact position: ${contact_position}`;
+    if (first_name || last_name) {
+      mergedRemarks += `\nName parts: ${[first_name, mid_name, last_name]
+        .filter(Boolean)
+        .join(' ')}`;
+    }
+
+    const sql = `
+      UPDATE clients
+      SET
+        name = COALESCE($1, name),
+        email = COALESCE($2, email),
+        contact_person = COALESCE($3, contact_person),
+        contact_address = COALESCE($4, contact_address),
+        contact_phone = COALESCE($5, contact_phone),
+        taxid = COALESCE($6, taxid),
+        tax_address = COALESCE($7, tax_address),
+        type_of_client = COALESCE($8, type_of_client),
+        remarks = COALESCE($9, remarks),
+        updated_at = now()
+      WHERE id = $10
+      RETURNING
+        id,
+        client_id,
+        name,
+        email,
+        contact_person,
+        contact_address,
+        contact_phone,
+        taxid,
+        tax_name,
+        tax_address,
+        lob,
+        type_of_client,
+        special_flag,
+        remarks,
+        created_at,
+        updated_at
+    `;
+
+    const params = [
+      name || null,
+      email || null,
+      contact_person || null,
+      contact_address || null,
+      contact_phone,
+      tax_id || null,
+      tax_address || null,
+      type_of_client || null,
+      mergedRemarks || null,
+      id,
+    ];
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Client not found' },
       });
     }
 
-    const existing = clients[idx];
-    const body = req.body || {};
-
-    const updated = {
-      ...existing,
-      ...body,
-      type_of_client: body.type_of_client || body.type || existing.type_of_client,
-      updated_at: new Date(),
+    const r = rows[0];
+    const responseClient = {
+      id: r.id,
+      type_of_client: r.type_of_client,
+      salutation: '',
+      first_name: '',
+      mid_name: '',
+      last_name: '',
+      name: r.name,
+      address_1: r.contact_address || '',
+      address_2: '',
+      address_3: '',
+      phone_1: r.contact_phone || '',
+      phone_2: '',
+      fax_1: '',
+      fax_2: '',
+      email: r.email || '',
+      contact_person: r.contact_person || '',
+      contact_position: '',
+      tax_id: r.taxid || '',
+      tax_address: r.tax_address || '',
+      remarks: r.remarks || '',
+      client_code: r.client_id || null,
+      special_flag: r.special_flag,
+      lob: r.lob,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
     };
-
-    clients[idx] = updated;
 
     return res.json({
       success: true,
-      data: updated,
+      data: responseClient,
       message: 'Client updated successfully',
     });
   } catch (err) {
@@ -134,23 +386,71 @@ router.put('/clients/:id', (req, res) => {
   }
 });
 
-// ===========================
-// PROPOSALS ENDPOINTS (simple stub if you still use it)
-// ===========================
+// ------------------------------
+// PROPOSALS
+// ------------------------------
 
-router.get('/proposals', (req, res) => {
-  return res.json({
-    success: true,
-    data: proposals,
-  });
+// GET /api/placement/proposals
+router.get('/proposals', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `
+      SELECT
+        id,
+        transaction_number,
+        type_of_case,
+        type_of_business,
+        client_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        sales_id,
+        request_date,
+        placing_slip_number,
+        quotation_slip_number,
+        remarks,
+        status,
+        created_at,
+        updated_at
+      FROM proposals
+      ORDER BY id DESC
+      `
+    );
+
+    const data = rows.map((r) => ({
+      id: r.id,
+      transaction_number: r.transaction_number || '',
+      type_of_case: r.type_of_case,
+      type_of_business: r.type_of_business,
+      client_id: r.client_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      sales_id: r.sales_id,
+      booking_date: r.request_date ? r.request_date.toISOString().split('T')[0] : '',
+      placing_slip_number: r.placing_slip_number || '',
+      qs_number: r.quotation_slip_number || '',
+      remarks: r.remarks || '',
+      status: r.status || 'DRAFT',
+    }));
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error('Error loading proposals:', err);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message },
+    });
+  }
 });
 
-router.post('/proposals', (req, res) => {
+// POST /api/placement/proposals
+router.post('/proposals', async (req, res) => {
   try {
+    const body = req.body || {};
     const {
       transaction_number,
       client_id,
-      insurance_id,
       source_business_id,
       sales_id,
       class_of_business_id,
@@ -158,11 +458,10 @@ router.post('/proposals', (req, res) => {
       type_of_case,
       type_of_business,
       booking_date,
-      policy_number,
       placing_slip_number,
       qs_number,
       remarks,
-    } = req.body;
+    } = body;
 
     if (!client_id || !class_of_business_id || !product_id) {
       return res.status(400).json({
@@ -174,33 +473,87 @@ router.post('/proposals', (req, res) => {
       });
     }
 
-    const newProposal = {
-      id: String(nextProposalId++),
-      transaction_number:
-        transaction_number || `PR-${Date.now().toString().slice(-6)}`,
+    const trx =
+      transaction_number && transaction_number.trim()
+        ? transaction_number
+        : `TRX-${Date.now().toString().slice(-6)}`;
+
+    const reqDate = booking_date || new Date().toISOString().split('T')[0];
+
+    const sql = `
+      INSERT INTO proposals (
+        transaction_number,
+        type_of_case,
+        type_of_business,
+        client_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        sales_id,
+        request_date,
+        placing_slip_number,
+        quotation_slip_number,
+        remarks,
+        status
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'DRAFT')
+      RETURNING
+        id,
+        transaction_number,
+        type_of_case,
+        type_of_business,
+        client_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        sales_id,
+        request_date,
+        placing_slip_number,
+        quotation_slip_number,
+        remarks,
+        status,
+        created_at,
+        updated_at
+    `;
+
+    const params = [
+      trx,
+      type_of_case || 'New',
+      type_of_business || 'Direct',
       client_id,
-      insurance_id: insurance_id || null,
-      source_business_id: source_business_id || null,
-      sales_id: sales_id || null,
+      source_business_id || null,
       class_of_business_id,
       product_id,
-      type_of_case: type_of_case || 'New',
-      type_of_business: type_of_business || 'Direct',
-      booking_date: booking_date || null,
-      policy_number: policy_number || null,
-      placing_slip_number: placing_slip_number || null,
-      qs_number: qs_number || null,
-      remarks: remarks || '',
-      status: 'DRAFT',
-      created_at: new Date(),
-      updated_at: new Date(),
-    };
+      sales_id || null,
+      reqDate,
+      placing_slip_number || null,
+      qs_number || null,
+      remarks || null,
+    ];
 
-    proposals.push(newProposal);
+    const { rows } = await db.query(sql, params);
+    const r = rows[0];
+
+    const proposal = {
+      id: r.id,
+      transaction_number: r.transaction_number,
+      type_of_case: r.type_of_case,
+      type_of_business: r.type_of_business,
+      client_id: r.client_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      sales_id: r.sales_id,
+      booking_date: r.request_date ? r.request_date.toISOString().split('T')[0] : '',
+      placing_slip_number: r.placing_slip_number || '',
+      qs_number: r.quotation_slip_number || '',
+      remarks: r.remarks || '',
+      status: r.status || 'DRAFT',
+    };
 
     return res.json({
       success: true,
-      data: newProposal,
+      data: proposal,
       message: 'Proposal created successfully',
     });
   } catch (err) {
@@ -212,30 +565,119 @@ router.post('/proposals', (req, res) => {
   }
 });
 
-router.put('/proposals/:id', (req, res) => {
+// PUT /api/placement/proposals/:id
+router.put('/proposals/:id', async (req, res) => {
   try {
-    const id = req.params.id;
-    const idx = proposals.findIndex((p) => sameId(p.id, id));
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid proposal id' },
+      });
+    }
 
-    if (idx === -1) {
+    const body = req.body || {};
+    const {
+      transaction_number,
+      client_id,
+      source_business_id,
+      sales_id,
+      class_of_business_id,
+      product_id,
+      type_of_case,
+      type_of_business,
+      booking_date,
+      placing_slip_number,
+      qs_number,
+      remarks,
+      status,
+    } = body;
+
+    const sql = `
+      UPDATE proposals
+      SET
+        transaction_number = COALESCE($1, transaction_number),
+        type_of_case = COALESCE($2, type_of_case),
+        type_of_business = COALESCE($3, type_of_business),
+        client_id = COALESCE($4, client_id),
+        source_business_id = COALESCE($5, source_business_id),
+        class_of_business_id = COALESCE($6, class_of_business_id),
+        product_id = COALESCE($7, product_id),
+        sales_id = COALESCE($8, sales_id),
+        request_date = COALESCE($9, request_date),
+        placing_slip_number = COALESCE($10, placing_slip_number),
+        quotation_slip_number = COALESCE($11, quotation_slip_number),
+        remarks = COALESCE($12, remarks),
+        status = COALESCE($13, status),
+        updated_at = now()
+      WHERE id = $14
+      RETURNING
+        id,
+        transaction_number,
+        type_of_case,
+        type_of_business,
+        client_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        sales_id,
+        request_date,
+        placing_slip_number,
+        quotation_slip_number,
+        remarks,
+        status,
+        created_at,
+        updated_at
+    `;
+
+    const reqDate = booking_date || null;
+
+    const params = [
+      transaction_number || null,
+      type_of_case || null,
+      type_of_business || null,
+      client_id || null,
+      source_business_id || null,
+      class_of_business_id || null,
+      product_id || null,
+      sales_id || null,
+      reqDate,
+      placing_slip_number || null,
+      qs_number || null,
+      remarks || null,
+      status || null,
+      id,
+    ];
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Proposal not found' },
       });
     }
 
-    const existing = proposals[idx];
-    const updated = {
-      ...existing,
-      ...req.body,
-      updated_at: new Date(),
+    const r = rows[0];
+    const proposal = {
+      id: r.id,
+      transaction_number: r.transaction_number,
+      type_of_case: r.type_of_case,
+      type_of_business: r.type_of_business,
+      client_id: r.client_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      sales_id: r.sales_id,
+      booking_date: r.request_date ? r.request_date.toISOString().split('T')[0] : '',
+      placing_slip_number: r.placing_slip_number || '',
+      qs_number: r.quotation_slip_number || '',
+      remarks: r.remarks || '',
+      status: r.status || 'DRAFT',
     };
-
-    proposals[idx] = updated;
 
     return res.json({
       success: true,
-      data: updated,
+      data: proposal,
       message: 'Proposal updated successfully',
     });
   } catch (err) {
@@ -247,27 +689,37 @@ router.put('/proposals/:id', (req, res) => {
   }
 });
 
-router.post('/proposals/:id/convert', (req, res) => {
+// POST /api/placement/proposals/:id/convert
+router.post('/proposals/:id/convert', async (req, res) => {
   try {
-    const id = req.params.id;
-    const idx = proposals.findIndex((p) => sameId(p.id, id));
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid proposal id' },
+      });
+    }
 
-    if (idx === -1) {
+    const { rows } = await db.query(
+      `
+      UPDATE proposals
+      SET status = 'CONVERTED', updated_at = now()
+      WHERE id = $1
+      RETURNING id, status
+      `,
+      [id]
+    );
+
+    if (rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Proposal not found' },
       });
     }
 
-    proposals[idx] = {
-      ...proposals[idx],
-      status: 'CONVERTED',
-      updated_at: new Date(),
-    };
-
     return res.json({
       success: true,
-      data: proposals[idx],
+      data: rows[0],
       message: 'Proposal marked as CONVERTED',
     });
   } catch (err) {
@@ -279,36 +731,98 @@ router.post('/proposals/:id/convert', (req, res) => {
   }
 });
 
-// ===========================
-// POLICIES ENDPOINTS
-// ===========================
+// ------------------------------
+// POLICIES
+// ------------------------------
 
-router.get('/policies', (req, res) => {
-  return res.json({
-    success: true,
-    data: policies,
-  });
-});
+// GET /api/placement/policies
+router.get('/policies', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `
+      SELECT
+        id,
+        transaction_number,
+        policy_number,
+        placing_number,
+        quotation_number,
+        client_id,
+        insurance_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        case_type,
+        type_of_business,
+        currency,
+        premium_amount,
+        commission_gross,
+        commission_to_source,
+        commission_net_percent,
+        effective_date,
+        expiry_date,
+        sent_to_finance,
+        request_date,
+        sales_id,
+        remarks,
+        created_at,
+        updated_at
+      FROM policies
+      ORDER BY id DESC
+      `
+    );
 
-router.get('/policies/:id', (req, res) => {
-  const id = req.params.id;
-  const policy = policies.find((p) => sameId(p.id, id));
+    const policies = rows.map((r) => ({
+      id: r.id,
+      transaction_number: r.transaction_number || '',
+      policy_number: r.policy_number || '',
+      placing_slip_number: r.placing_number || '',
+      qs_number: r.quotation_number || '',
+      client_id: r.client_id,
+      insurance_id: r.insurance_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      type_of_case: r.case_type || 'New',
+      type_of_business: r.type_of_business || 'Direct',
+      currency: r.currency || 'IDR',
+      premium_amount: r.premium_amount ? Number(r.premium_amount) : 0,
+      commission_gross: r.commission_gross ? Number(r.commission_gross) : 0,
+      commission_to_source: r.commission_to_source
+        ? Number(r.commission_to_source)
+        : 0,
+      commission_net_percent: r.commission_net_percent
+        ? Number(r.commission_net_percent)
+        : 0,
+      effective_date: r.effective_date
+        ? r.effective_date.toISOString().split('T')[0]
+        : '',
+      expiry_date: r.expiry_date
+        ? r.expiry_date.toISOString().split('T')[0]
+        : '',
+      sent_to_finance: r.sent_to_finance,
+      booking_date: r.request_date
+        ? r.request_date.toISOString().split('T')[0]
+        : '',
+      sales_id: r.sales_id,
+      remarks: r.remarks || '',
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    }));
 
-  if (!policy) {
-    return res.status(404).json({
+    return res.json({ success: true, data: policies });
+  } catch (err) {
+    console.error('Error loading policies:', err);
+    return res.status(500).json({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Policy not found' },
+      error: { code: 'SERVER_ERROR', message: err.message },
     });
   }
-
-  return res.json({
-    success: true,
-    data: policy,
-  });
 });
 
-router.post('/policies', (req, res) => {
+// POST /api/placement/policies
+router.post('/policies', async (req, res) => {
   try {
+    const body = req.body || {};
     const {
       transaction_number,
       client_id,
@@ -319,7 +833,6 @@ router.post('/policies', (req, res) => {
       product_id,
       type_of_case,
       type_of_business,
-      business_type, // extra business type if needed
       booking_date,
       effective_date,
       expiry_date,
@@ -332,10 +845,8 @@ router.post('/policies', (req, res) => {
       commission_to_source,
       commission_net_percent,
       remarks,
-      from_proposal_id, // optional
-    } = req.body;
+    } = body;
 
-    // Insurance is handled at policy level, but we don't hard-block it here
     if (!client_id || !class_of_business_id || !product_id) {
       return res.status(400).json({
         success: false,
@@ -346,50 +857,148 @@ router.post('/policies', (req, res) => {
       });
     }
 
-    const gross = parseFloat(commission_gross) || 0;
-    const source = parseFloat(commission_to_source) || 0;
-    const net =
-      commission_net_percent !== undefined && commission_net_percent !== null
-        ? parseFloat(commission_net_percent) || 0
-        : gross - source;
+    const trx =
+      transaction_number && transaction_number.trim()
+        ? transaction_number
+        : `POL-${Date.now().toString().slice(-6)}`;
 
-    const newPolicy = {
-      id: String(nextPolicyId++),
-      transaction_number:
-        transaction_number || `POL-${Date.now().toString().slice(-6)}`,
+    const reqDate = booking_date || new Date().toISOString().split('T')[0];
+
+    const prem = premium_amount != null ? Number(premium_amount) : 0;
+    const gross = commission_gross != null ? Number(commission_gross) : 0;
+    const src = commission_to_source != null ? Number(commission_to_source) : 0;
+    const net =
+      commission_net_percent != null && commission_net_percent !== ''
+        ? Number(commission_net_percent)
+        : gross - src;
+
+    const sql = `
+      INSERT INTO policies (
+        transaction_number,
+        policy_number,
+        placing_number,
+        quotation_number,
+        client_id,
+        insurance_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        case_type,
+        type_of_business,
+        currency,
+        premium_amount,
+        commission_gross,
+        commission_to_source,
+        commission_net_percent,
+        effective_date,
+        expiry_date,
+        sent_to_finance,
+        request_date,
+        sales_id,
+        remarks
+      )
+      VALUES (
+        $1,$2,$3,$4,
+        $5,$6,$7,$8,$9,
+        $10,$11,$12,$13,$14,$15,$16,
+        $17,$18,false,$19,$20,$21
+      )
+      RETURNING
+        id,
+        transaction_number,
+        policy_number,
+        placing_number,
+        quotation_number,
+        client_id,
+        insurance_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        case_type,
+        type_of_business,
+        currency,
+        premium_amount,
+        commission_gross,
+        commission_to_source,
+        commission_net_percent,
+        effective_date,
+        expiry_date,
+        sent_to_finance,
+        request_date,
+        sales_id,
+        remarks,
+        created_at,
+        updated_at
+    `;
+
+    const params = [
+      trx,
+      policy_number || null,
+      placing_slip_number || null,
+      qs_number || null,
       client_id,
-      insurance_id: insurance_id || null,
-      source_business_id: source_business_id || null,
-      sales_id: sales_id || null,
+      insurance_id || null,
+      source_business_id || null,
       class_of_business_id,
       product_id,
-      type_of_case: type_of_case || 'New',
-      type_of_business: type_of_business || 'Direct',
-      business_type: business_type || null,
-      booking_date: booking_date || null,
-      effective_date: effective_date || null,
-      expiry_date: expiry_date || null,
-      policy_number: policy_number || null,
-      placing_slip_number: placing_slip_number || null,
-      qs_number: qs_number || null,
-      premium_amount: premium_amount ? parseFloat(premium_amount) : 0,
-      currency: currency || 'IDR',
-      commission_gross: gross,
-      commission_to_source: source,
-      commission_net_percent: net,
-      remarks: remarks || '',
-      from_proposal_id: from_proposal_id || null,
-      status: 'DRAFT',
-      sent_to_finance: false,
-      created_at: new Date(),
-      updated_at: new Date(),
-    };
+      type_of_case || 'New',
+      type_of_business || 'Direct',
+      currency || 'IDR',
+      prem,
+      gross,
+      src,
+      net,
+      effective_date || null,
+      expiry_date || null,
+      reqDate,
+      sales_id || null,
+      remarks || null,
+    ];
 
-    policies.push(newPolicy);
+    const { rows } = await db.query(sql, params);
+    const r = rows[0];
+
+    const policy = {
+      id: r.id,
+      transaction_number: r.transaction_number || '',
+      policy_number: r.policy_number || '',
+      placing_slip_number: r.placing_number || '',
+      qs_number: r.quotation_number || '',
+      client_id: r.client_id,
+      insurance_id: r.insurance_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      type_of_case: r.case_type || 'New',
+      type_of_business: r.type_of_business || 'Direct',
+      currency: r.currency || 'IDR',
+      premium_amount: r.premium_amount ? Number(r.premium_amount) : 0,
+      commission_gross: r.commission_gross ? Number(r.commission_gross) : 0,
+      commission_to_source: r.commission_to_source
+        ? Number(r.commission_to_source)
+        : 0,
+      commission_net_percent: r.commission_net_percent
+        ? Number(r.commission_net_percent)
+        : 0,
+      effective_date: r.effective_date
+        ? r.effective_date.toISOString().split('T')[0]
+        : '',
+      expiry_date: r.expiry_date
+        ? r.expiry_date.toISOString().split('T')[0]
+        : '',
+      sent_to_finance: r.sent_to_finance,
+      booking_date: r.request_date
+        ? r.request_date.toISOString().split('T')[0]
+        : '',
+      sales_id: r.sales_id,
+      remarks: r.remarks || '',
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    };
 
     return res.json({
       success: true,
-      data: newPolicy,
+      data: policy,
       message: 'Policy created successfully',
     });
   } catch (err) {
@@ -401,47 +1010,193 @@ router.post('/policies', (req, res) => {
   }
 });
 
-router.put('/policies/:id', (req, res) => {
+// PUT /api/placement/policies/:id
+router.put('/policies/:id', async (req, res) => {
   try {
-    const id = req.params.id;
-    const idx = policies.findIndex((p) => sameId(p.id, id));
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
+      });
+    }
 
-    if (idx === -1) {
+    const body = req.body || {};
+    const {
+      transaction_number,
+      client_id,
+      insurance_id,
+      source_business_id,
+      sales_id,
+      class_of_business_id,
+      product_id,
+      type_of_case,
+      type_of_business,
+      booking_date,
+      effective_date,
+      expiry_date,
+      policy_number,
+      placing_slip_number,
+      qs_number,
+      premium_amount,
+      currency,
+      commission_gross,
+      commission_to_source,
+      commission_net_percent,
+      remarks,
+      sent_to_finance,
+    } = body;
+
+    const prem =
+      premium_amount !== undefined && premium_amount !== null
+        ? Number(premium_amount)
+        : null;
+    const gross =
+      commission_gross !== undefined && commission_gross !== null
+        ? Number(commission_gross)
+        : null;
+    const src =
+      commission_to_source !== undefined && commission_to_source !== null
+        ? Number(commission_to_source)
+        : null;
+    const net =
+      commission_net_percent !== undefined &&
+      commission_net_percent !== null &&
+      commission_net_percent !== ''
+        ? Number(commission_net_percent)
+        : null;
+
+    const sql = `
+      UPDATE policies
+      SET
+        transaction_number = COALESCE($1, transaction_number),
+        policy_number = COALESCE($2, policy_number),
+        placing_number = COALESCE($3, placing_number),
+        quotation_number = COALESCE($4, quotation_number),
+        client_id = COALESCE($5, client_id),
+        insurance_id = COALESCE($6, insurance_id),
+        source_business_id = COALESCE($7, source_business_id),
+        class_of_business_id = COALESCE($8, class_of_business_id),
+        product_id = COALESCE($9, product_id),
+        case_type = COALESCE($10, case_type),
+        type_of_business = COALESCE($11, type_of_business),
+        currency = COALESCE($12, currency),
+        premium_amount = COALESCE($13, premium_amount),
+        commission_gross = COALESCE($14, commission_gross),
+        commission_to_source = COALESCE($15, commission_to_source),
+        commission_net_percent = COALESCE($16, commission_net_percent),
+        effective_date = COALESCE($17, effective_date),
+        expiry_date = COALESCE($18, expiry_date),
+        request_date = COALESCE($19, request_date),
+        sales_id = COALESCE($20, sales_id),
+        remarks = COALESCE($21, remarks),
+        sent_to_finance = COALESCE($22, sent_to_finance),
+        updated_at = now()
+      WHERE id = $23
+      RETURNING
+        id,
+        transaction_number,
+        policy_number,
+        placing_number,
+        quotation_number,
+        client_id,
+        insurance_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        case_type,
+        type_of_business,
+        currency,
+        premium_amount,
+        commission_gross,
+        commission_to_source,
+        commission_net_percent,
+        effective_date,
+        expiry_date,
+        sent_to_finance,
+        request_date,
+        sales_id,
+        remarks,
+        created_at,
+        updated_at
+    `;
+
+    const params = [
+      transaction_number || null,
+      policy_number || null,
+      placing_slip_number || null,
+      qs_number || null,
+      client_id || null,
+      insurance_id || null,
+      source_business_id || null,
+      class_of_business_id || null,
+      product_id || null,
+      type_of_case || null,
+      type_of_business || null,
+      currency || null,
+      prem,
+      gross,
+      src,
+      net,
+      effective_date || null,
+      expiry_date || null,
+      booking_date || null,
+      sales_id || null,
+      remarks || null,
+      typeof sent_to_finance === 'boolean' ? sent_to_finance : null,
+      id,
+    ];
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Policy not found' },
       });
     }
 
-    const existing = policies[idx];
-
-    const updated = {
-      ...existing,
-      ...req.body,
-      premium_amount:
-        req.body.premium_amount !== undefined
-          ? parseFloat(req.body.premium_amount) || 0
-          : existing.premium_amount,
-      commission_gross:
-        req.body.commission_gross !== undefined
-          ? parseFloat(req.body.commission_gross) || 0
-          : existing.commission_gross,
-      commission_to_source:
-        req.body.commission_to_source !== undefined
-          ? parseFloat(req.body.commission_to_source) || 0
-          : existing.commission_to_source,
-      commission_net_percent:
-        req.body.commission_net_percent !== undefined
-          ? parseFloat(req.body.commission_net_percent) || 0
-          : existing.commission_net_percent,
-      updated_at: new Date(),
+    const r = rows[0];
+    const policy = {
+      id: r.id,
+      transaction_number: r.transaction_number || '',
+      policy_number: r.policy_number || '',
+      placing_slip_number: r.placing_number || '',
+      qs_number: r.quotation_number || '',
+      client_id: r.client_id,
+      insurance_id: r.insurance_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      type_of_case: r.case_type || 'New',
+      type_of_business: r.type_of_business || 'Direct',
+      currency: r.currency || 'IDR',
+      premium_amount: r.premium_amount ? Number(r.premium_amount) : 0,
+      commission_gross: r.commission_gross ? Number(r.commission_gross) : 0,
+      commission_to_source: r.commission_to_source
+        ? Number(r.commission_to_source)
+        : 0,
+      commission_net_percent: r.commission_net_percent
+        ? Number(r.commission_net_percent)
+        : 0,
+      effective_date: r.effective_date
+        ? r.effective_date.toISOString().split('T')[0]
+        : '',
+      expiry_date: r.expiry_date
+        ? r.expiry_date.toISOString().split('T')[0]
+        : '',
+      sent_to_finance: r.sent_to_finance,
+      booking_date: r.request_date
+        ? r.request_date.toISOString().split('T')[0]
+        : '',
+      sales_id: r.sales_id,
+      remarks: r.remarks || '',
+      created_at: r.created_at,
+      updated_at: r.updated_at,
     };
-
-    policies[idx] = updated;
 
     return res.json({
       success: true,
-      data: updated,
+      data: policy,
       message: 'Policy updated successfully',
     });
   } catch (err) {
@@ -453,90 +1208,107 @@ router.put('/policies/:id', (req, res) => {
   }
 });
 
-router.post('/policies/:id/send-to-finance', (req, res) => {
+// POST /api/placement/policies/:id/send-to-finance
+router.post('/policies/:id/send-to-finance', async (req, res) => {
   try {
-    const id = req.params.id;
-    const idx = policies.findIndex((p) => sameId(p.id, id));
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
+      });
+    }
 
-    if (idx === -1) {
+    const { rows } = await db.query(
+      `
+      UPDATE policies
+      SET
+        sent_to_finance = true,
+        updated_at = now()
+      WHERE id = $1
+      RETURNING
+        id,
+        transaction_number,
+        policy_number,
+        placing_number,
+        quotation_number,
+        client_id,
+        insurance_id,
+        source_business_id,
+        class_of_business_id,
+        product_id,
+        case_type,
+        type_of_business,
+        currency,
+        premium_amount,
+        commission_gross,
+        commission_to_source,
+        commission_net_percent,
+        effective_date,
+        expiry_date,
+        sent_to_finance,
+        request_date,
+        sales_id,
+        remarks,
+        created_at,
+        updated_at
+      `,
+      [id]
+    );
+
+    if (rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Policy not found' },
       });
     }
 
-    policies[idx] = {
-      ...policies[idx],
-      status: 'SENT_TO_FINANCE',
-      sent_to_finance: true,
-      sent_to_finance_at: new Date(),
-      updated_at: new Date(),
+    const r = rows[0];
+    const policy = {
+      id: r.id,
+      transaction_number: r.transaction_number || '',
+      policy_number: r.policy_number || '',
+      placing_slip_number: r.placing_number || '',
+      qs_number: r.quotation_number || '',
+      client_id: r.client_id,
+      insurance_id: r.insurance_id,
+      source_business_id: r.source_business_id,
+      class_of_business_id: r.class_of_business_id,
+      product_id: r.product_id,
+      type_of_case: r.case_type || 'New',
+      type_of_business: r.type_of_business || 'Direct',
+      currency: r.currency || 'IDR',
+      premium_amount: r.premium_amount ? Number(r.premium_amount) : 0,
+      commission_gross: r.commission_gross ? Number(r.commission_gross) : 0,
+      commission_to_source: r.commission_to_source
+        ? Number(r.commission_to_source)
+        : 0,
+      commission_net_percent: r.commission_net_percent
+        ? Number(r.commission_net_percent)
+        : 0,
+      effective_date: r.effective_date
+        ? r.effective_date.toISOString().split('T')[0]
+        : '',
+      expiry_date: r.expiry_date
+        ? r.expiry_date.toISOString().split('T')[0]
+        : '',
+      sent_to_finance: r.sent_to_finance,
+      booking_date: r.request_date
+        ? r.request_date.toISOString().split('T')[0]
+        : '',
+      sales_id: r.sales_id,
+      remarks: r.remarks || '',
+      created_at: r.created_at,
+      updated_at: r.updated_at,
     };
 
     return res.json({
       success: true,
-      data: policies[idx],
+      data: policy,
       message: 'Policy marked as SENT_TO_FINANCE',
     });
   } catch (err) {
     console.error('Error sending policy to finance:', err);
-    return res.status(500).json({
-      success: false,
-      error: { code: 'SERVER_ERROR', message: err.message },
-    });
-  }
-});
-
-// ===========================
-// DOCUMENTS (very simple stub)
-// ===========================
-
-router.get('/documents', (req, res) => {
-  const { policy_id } = req.query;
-
-  const filtered = policy_id
-    ? documents.filter((d) => sameId(d.policy_id, policy_id))
-    : documents;
-
-  return res.json({
-    success: true,
-    data: filtered,
-  });
-});
-
-router.post('/documents', (req, res) => {
-  try {
-    const { policy_id, file_name, file_url, mime_type, size } = req.body;
-
-    if (!policy_id || !file_name) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'policy_id and file_name are required',
-        },
-      });
-    }
-
-    const newDoc = {
-      id: String(nextDocumentId++),
-      policy_id,
-      file_name,
-      file_url: file_url || null,
-      mime_type: mime_type || 'application/octet-stream',
-      size: size ? parseInt(size, 10) : null,
-      uploaded_at: new Date(),
-    };
-
-    documents.push(newDoc);
-
-    return res.json({
-      success: true,
-      data: newDoc,
-      message: 'Document added successfully',
-    });
-  } catch (err) {
-    console.error('Error creating document:', err);
     return res.status(500).json({
       success: false,
       error: { code: 'SERVER_ERROR', message: err.message },
