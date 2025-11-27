@@ -3,8 +3,11 @@
 // - Proposal tab: TRX, Client, Source of Business, Sales, COB, Product, Case, Business, Booking, PS/QS (no Policy No)
 // - Policy tab: all Proposal fields + Insurer, Policy No, Effective/Expiry(+1y), Currency, Premium, Commissions (net auto = gross - source)
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import api from "../services/api";
+import ReactQuill from "react-quill";
+//
+
 
 // Helpers
 const toInitials = (str) => {
@@ -37,7 +40,43 @@ const monthToRoman = (monthNumber) => {
 
 const CURRENCIES = ["IDR", "USD", "EUR"];
 
+const quillModules = {
+  toolbar: [
+    [{ header: [1, 2, 3, false] }],
+    ["bold", "italic", "underline"],
+    [{ list: "ordered" }, { list: "bullet" }],
+    ["link"],
+    ["clean"],
+  ],
+};
+
+const formatFileSize = (bytes) => {
+  if (bytes == null) return "";
+  const v = Number(bytes);
+  if (Number.isNaN(v)) return "";
+  if (v < 1024) return `${v} B`;
+  const kb = v / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString();
+};
+
+
+
+
+
 function Placement() {
+  const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+  const API_ROOT = API_BASE
+    ? API_BASE.replace(/\/api\/?$/, "") // strip trailing /api or /api/
+    : "";
   const [activeTab, setActiveTab] = useState("clients");
 
   const [clients, setClients] = useState([]);
@@ -50,6 +89,8 @@ function Placement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  
 
   // =============================
   // Client state
@@ -160,9 +201,73 @@ function Placement() {
   const [showPolicyModal, setShowPolicyModal] = useState(false);
   const [policyProducts, setPolicyProducts] = useState([]);
 
+  const [policyDocuments, setPolicyDocuments] = useState([]);
+  const [policyDocFile, setPolicyDocFile] = useState(null);
+  const [policyDocUploading, setPolicyDocUploading] = useState(false);
+  const policyDocInputRef = useRef(null);
   const [policyNumberValidation, setPolicyNumberValidation] = useState("");
   const [placingValidation, setPlacingValidation] = useState("");
   const [qsValidation, setQsValidation] = useState("");
+  const fileInputRef = useRef(null);
+
+  // =============================
+  // Policy Document handlers
+  // =============================
+  const loadPolicyDocuments = async (policyId) => {
+    try {
+      const res = await api.get(`/placement/policies/${policyId}/documents`);
+      const docs = res.data.data || [];
+      setPolicyDocuments(docs);
+    } catch (err) {
+      console.error("Error loading policy documents:", err);
+      setPolicyDocuments([]);
+    }
+  };
+
+  const handlePolicyFileChange = (e) => {
+    const file = e.target.files?.[0] || null;
+    setPolicyDocFile(file);
+  };
+
+  const handleUploadPolicyDocument = async () => {
+    if (!editingPolicy || !editingPolicy.id) {
+      alert("Please save the policy first, then reopen it to upload documents.");
+      return;
+    }
+    if (!policyDocFile) {
+      alert("Please choose a file first.");
+      return;
+    }
+
+    try {
+      setPolicyDocUploading(true);
+      const formData = new FormData();
+      formData.append("file", policyDocFile);
+
+      const res = await api.post(
+        `/placement/policies/${editingPolicy.id}/documents`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+
+      const doc = res.data.data || res.data;
+      setPolicyDocuments((prev) => [...prev, doc]);
+      setPolicyDocFile(null);
+
+      if (policyDocInputRef.current) {
+        policyDocInputRef.current.value = "";
+      }
+    } catch (err) {
+      console.error("Error uploading policy document:", err);
+      setError("Failed to upload policy document.");
+    } finally {
+      setPolicyDocUploading(false);
+    }
+  };
+
+
 
   // =============================
   // Search / filter
@@ -704,7 +809,7 @@ function Placement() {
       };
 
       if (editingClient) {
-        await api.put(`/placement/clients/${editingClient.client_id}`, payload);
+        await api.put(`/placement/clients/${editingClient.id}`, payload);
         setSuccess("Client updated.");
       } else {
         await api.post("/placement/clients", payload);
@@ -894,6 +999,55 @@ function Placement() {
       setLoading(false);
     }
   };
+
+ const handleTriggerUpload = () => {
+    if (!policyForm.id) {
+      setError("Please save the policy first before uploading documents.");
+      return;
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !policyForm.id) return;
+
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("document_type", "Policy Document");
+      formData.append("description", "");
+
+      const res = await api.post(
+        `/placement/policies/${policyForm.id}/documents`,
+        formData,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+
+      const newDoc =
+        res.data?.data || res.data?.document || res.data || null;
+
+      if (newDoc) {
+        setPolicyDocuments((prev) => [...prev, newDoc]);
+        setSuccess("Document uploaded.");
+      }
+    } catch (err) {
+      console.error("Error uploading document:", err);
+      setError("Failed to upload document.");
+    } finally {
+      setLoading(false);
+    }
+  };
+ 
 
   // =============================
   // Filtered lists
@@ -1251,10 +1405,15 @@ function Placement() {
             <h5 className="mb-0">Policies</h5>
             <button
               className="btn btn-primary"
-              onClick={() => {
-                resetPolicyForm();
-                setShowPolicyModal(true);
-              }}
+             onClick={() => {
+              setShowPolicyModal(false);
+              resetPolicyForm();
+              setPolicyDocuments([]);
+              setPolicyDocFile(null);
+              if (policyDocInputRef.current) {
+                policyDocInputRef.current.value = '';
+              }
+            }}
             >
               + New Policy
             </button>
@@ -1349,13 +1508,15 @@ function Placement() {
                           <div className="btn-group btn-group-sm">
                             <button
                               className="btn btn-outline-secondary"
-                              onClick={() => {
+                               onClick={() => {
                                 setEditingPolicy(p);
                                 setPolicyForm({
                                   ...emptyPolicyForm,
                                   ...p,
                                 });
+                                setPolicyDocuments([]);
                                 setShowPolicyModal(true);
+                                loadPolicyDocuments(p.id);
                               }}
                             >
                               Edit
@@ -1781,16 +1942,13 @@ function Placement() {
 
                   <div className="mb-3">
                     <label className="form-label">Remarks</label>
-                    <textarea
-                      className="form-control"
-                      rows="2"
-                      value={clientForm.remarks}
-                      onChange={(e) =>
-                        setClientForm({
-                          ...clientForm,
-                          remarks: e.target.value,
-                        })
+                    <ReactQuill
+                      theme="snow"
+                      value={clientForm.remarks || ""}
+                      onChange={(value) =>
+                        setClientForm((prev) => ({ ...prev, remarks: value }))
                       }
+                      modules={quillModules}
                     />
                   </div>
 
@@ -2077,16 +2235,13 @@ function Placement() {
 
                   <div className="mb-3">
                     <label className="form-label">Remarks</label>
-                    <textarea
-                      className="form-control"
-                      rows="2"
+                    <ReactQuill
+                      theme="snow"
                       value={proposalForm.remarks || ""}
-                      onChange={(e) =>
-                        setProposalForm({
-                          ...proposalForm,
-                          remarks: e.target.value,
-                        })
+                      onChange={(value) =>
+                        setProposalForm((prev) => ({ ...prev, remarks: value }))
                       }
+                      modules={quillModules}
                     />
                   </div>
 
@@ -2546,23 +2701,89 @@ function Placement() {
                     />
                   </div>
                   </div>
-
-                  
-
                   <div className="mb-3">
                     <label className="form-label">Remarks</label>
-                    <textarea
-                      className="form-control"
-                      rows="2"
+                    <ReactQuill
+                      theme="snow"
                       value={policyForm.remarks || ""}
-                      onChange={(e) =>
-                        setPolicyForm({
-                          ...policyForm,
-                          remarks: e.target.value,
-                        })
+                      onChange={(value) =>
+                        setPolicyForm((prev) => ({ ...prev, remarks: value }))
                       }
+                      modules={quillModules}
                     />
                   </div>
+                  <div className="mb-3">
+                    <label className="form-label">Upload Documents</label>
+                    {editingPolicy && editingPolicy.id ? (
+                      <>
+                        <input
+                          type="file"
+                          className="form-control mb-2"
+                          ref={policyDocInputRef}
+                          onChange={handlePolicyFileChange}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm mb-2"
+                          onClick={handleUploadPolicyDocument}
+                          disabled={policyDocUploading}
+                        >
+                          {policyDocUploading ? 'Uploading...' : 'Upload Document'}
+                        </button>
+                      </>
+                    ) : (
+                      <small className="text-muted">
+                        Save the policy first, then reopen it to upload documents.
+                      </small>
+                    )}
+                    {/* Hidden file input */}
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      style={{ display: "none" }}
+                      onChange={handleFileChange}
+                    />
+
+                    {policyDocuments && policyDocuments.length > 0 ? (
+                      <div className="table-responsive">
+                        <table className="table table-sm align-middle">
+                          <thead className="table-light">
+                            <tr>
+                              <th>File</th>
+                              <th>Size</th>
+                              <th>Uploaded At</th>
+                              <th />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {policyDocuments.map((d) => (
+                              <tr key={d.id}>
+                                <td>{d.original_name || d.file_name}</td>
+                                <td>{formatFileSize(d.size || d.file_size)}</td>
+                                <td>{formatDateTime(d.uploaded_at)}</td>
+                                <td className="text-end">
+                                  {(d.file_url || d.url) && (
+                                    <a
+                                      href={`${API_ROOT}${d.file_url || d.url}`}
+                                      className="btn btn-sm btn-outline-secondary"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      Download
+                                    </a>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <small className="text-muted">No documents uploaded yet.</small>
+                    )}
+                  </div>
+                  
+
 
                   <div className="d-flex justify-content-end">
                     <button
@@ -2571,6 +2792,11 @@ function Placement() {
                       onClick={() => {
                         setShowPolicyModal(false);
                         resetPolicyForm();
+                        setPolicyDocuments([]);
+                        setPolicyDocFile(null);
+                        if (policyDocInputRef.current) {
+                          policyDocInputRef.current.value = '';
+                        }
                       }}
                     >
                       Cancel

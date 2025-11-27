@@ -10,6 +10,10 @@ const api = axios.create({
     'Content-Type': 'application/json'
   }
 });
+const savedUser = JSON.parse(localStorage.getItem("user"));
+if (savedUser?.id) {
+  api.defaults.headers.common["x-user-id"] = savedUser.id;
+}
 
 // Add token to requests
 api.interceptors.request.use(

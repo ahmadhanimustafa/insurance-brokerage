@@ -5,10 +5,66 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../utils/db'); // adjust if your path/name is different
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 // helper: uniform ID compare
 const sameId = (a, b) => String(a) === String(b);
 
+
+// Setup upload directory
+const uploadDir =
+  process.env.FILE_UPLOAD_PATH || path.join(__dirname, '..', '..', 'uploads');
+
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Multer storage for policy documents
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const policyId = req.params.id || 'unknown';
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname || '');
+    cb(null, `policy_${policyId}_${unique}${ext}`);
+  },
+});
+
+const upload = multer({ storage });
+
+const getPolicyDocsManifestPath = (policyId) =>
+  path.join(uploadDir, `policy_${policyId}_docs.json`);
+
+const readPolicyDocs = (policyId) => {
+  const filePath = getPolicyDocsManifestPath(policyId);
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+};
+
+const writePolicyDocs = (policyId, docs) => {
+  const filePath = getPolicyDocsManifestPath(policyId);
+  fs.writeFileSync(filePath, JSON.stringify(docs, null, 2), 'utf8');
+};
+
+// Helper to get user ID from req.user or headers
+const getUserId = (req) => {
+  if (req.user && (req.user.id || req.user.user_id)) {
+    return req.user.id || req.user.user_id;
+  }
+  const fromHeader = req.headers['x-user-id'];
+  if (!fromHeader) return null;
+  const parsed = parseInt(fromHeader, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
 // ------------------------------
 // CLIENTS
 // ------------------------------
@@ -25,7 +81,12 @@ router.get('/clients', async (req, res) => {
         email,
         contact_person,
         contact_address,
+        contact_address_2,
+        contact_address_3,
         contact_phone,
+        contact_phone_2,
+        contact_fax,
+        contact_fax_2,
         taxid,
         tax_name,
         tax_address,
@@ -33,6 +94,11 @@ router.get('/clients', async (req, res) => {
         type_of_client,
         special_flag,
         remarks,
+        salutation,
+        first_name,
+        mid_name,
+        last_name,
+        contact_position,
         created_at,
         updated_at
       FROM clients
@@ -40,25 +106,25 @@ router.get('/clients', async (req, res) => {
       `
     );
 
-    // Map DB columns back into the shape Placement.jsx expects for listing / dropdowns.
     const data = rows.map((r) => ({
-      id: r.id, // used as FK everywhere
+      id: r.id,
+      client_id: r.client_id,
       type_of_client: r.type_of_client,
-      salutation: "",      // not stored; kept only in UI
-      first_name: "",      // not stored; we store full name in `name`
-      mid_name: "",
-      last_name: "",
+      salutation: r.salutation || "",
+      first_name: r.first_name || "",
+      mid_name: r.mid_name || "",
+      last_name: r.last_name || "",
       name: r.name,
       address_1: r.contact_address || "",
-      address_2: "",
-      address_3: "",
+      address_2: r.contact_address_2 || "",
+      address_3: r.contact_address_3 || "",
       phone_1: r.contact_phone || "",
-      phone_2: "",
-      fax_1: "",
-      fax_2: "",
+      phone_2: r.contact_phone_2 || "",
+      fax_1: r.contact_fax || "",
+      fax_2: r.contact_fax_2 || "",
       email: r.email || "",
       contact_person: r.contact_person || "",
-      contact_position: "",
+      contact_position: r.contact_position || "",
       tax_id: r.taxid || "",
       tax_address: r.tax_address || "",
       remarks: r.remarks || "",
@@ -78,6 +144,7 @@ router.get('/clients', async (req, res) => {
     });
   }
 });
+
 
 // POST /api/placement/clients
 router.post('/clients', async (req, res) => {
@@ -104,6 +171,7 @@ router.post('/clients', async (req, res) => {
       tax_id,
       tax_address,
       remarks,
+      lob,
     } = body;
 
     if (!type_of_client || !name) {
@@ -116,33 +184,8 @@ router.post('/clients', async (req, res) => {
       });
     }
 
-    const contact_address = [address_1, address_2, address_3]
-      .filter(Boolean)
-      .join('\n');
-
-    // main phone
-    const contact_phone = phone_1 || null;
-
-    // stuff we don't have direct columns for -> append into remarks
-    let mergedRemarks = remarks || '';
-    if (phone_2) mergedRemarks += `\nAlt phone: ${phone_2}`;
-    if (fax_1) mergedRemarks += `\nFax 1: ${fax_1}`;
-    if (fax_2) mergedRemarks += `\nFax 2: ${fax_2}`;
-    if (contact_position) mergedRemarks += `\nContact position: ${contact_position}`;
-    if (salutation || first_name || last_name) {
-      mergedRemarks += `\nName parts: ${[
-        salutation,
-        first_name,
-        mid_name,
-        last_name,
-      ]
-        .filter(Boolean)
-        .join(' ')}`;
-    }
-
-    // Frontend generates a pretty code (CL-001 etc) in payload.id.
-    // We'll store that in clients.client_id, but primary key is the serial `id`.
     const clientCode = body.id || null;
+    const userId = getUserId(req);
 
     const insertSql = `
       INSERT INTO clients (
@@ -158,9 +201,27 @@ router.post('/clients', async (req, res) => {
         type_of_client,
         special_flag,
         remarks,
-        client_id
+        client_id,
+        created_by,
+        updated_by,
+        salutation,
+        first_name,
+        mid_name,
+        last_name,
+        contact_address_2,
+        contact_address_3,
+        contact_phone_2,
+        contact_fax,
+        contact_fax_2,
+        contact_position,
+        created_at,
+        updated_at
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12)
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12,
+        $13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
+        now(),now()
+      )
       RETURNING
         id,
         client_id,
@@ -168,7 +229,12 @@ router.post('/clients', async (req, res) => {
         email,
         contact_person,
         contact_address,
+        contact_address_2,
+        contact_address_3,
         contact_phone,
+        contact_phone_2,
+        contact_fax,
+        contact_fax_2,
         taxid,
         tax_name,
         tax_address,
@@ -176,23 +242,42 @@ router.post('/clients', async (req, res) => {
         type_of_client,
         special_flag,
         remarks,
+        salutation,
+        first_name,
+        mid_name,
+        last_name,
+        contact_position,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by
     `;
 
     const params = [
-      name,
-      email || null,
-      contact_person || null,
-      contact_address || null,
-      contact_phone,
-      tax_id || null,
-      null, // tax_name not provided from UI
-      tax_address || null,
-      null, // lob
-      type_of_client,
-      mergedRemarks || null,
-      clientCode,
+      name,                       // $1  name
+      email || null,              // $2  email
+      contact_person || null,     // $3  contact_person
+      address_1 || null,          // $4  contact_address
+      phone_1 || null,            // $5  contact_phone
+      tax_id || null,             // $6  taxid
+      null,                       // $7  tax_name
+      tax_address || null,        // $8  tax_address
+      lob || null,                // $9  lob
+      type_of_client,             // $10 type_of_client
+      remarks || null,            // $11 remarks
+      clientCode,                 // $12 client_id
+      userId,                     // $13 created_by
+      userId,                     // $14 updated_by
+      salutation || null,         // $15 salutation
+      first_name || null,         // $16 first_name
+      mid_name || null,           // $17 mid_name
+      last_name || null,          // $18 last_name
+      address_2 || null,          // $19 contact_address_2
+      address_3 || null,          // $20 contact_address_3
+      phone_2 || null,            // $21 contact_phone_2
+      fax_1 || null,              // $22 contact_fax
+      fax_2 || null,              // $23 contact_fax_2
+      contact_position || null,   // $24 contact_position
     ];
 
     const { rows } = await db.query(insertSql, params);
@@ -201,21 +286,21 @@ router.post('/clients', async (req, res) => {
     const responseClient = {
       id: r.id,
       type_of_client: r.type_of_client,
-      salutation: '',
-      first_name: '',
-      mid_name: '',
-      last_name: '',
+      salutation: r.salutation || '',
+      first_name: r.first_name || '',
+      mid_name: r.mid_name || '',
+      last_name: r.last_name || '',
       name: r.name,
       address_1: r.contact_address || '',
-      address_2: '',
-      address_3: '',
+      address_2: r.contact_address_2 || '',
+      address_3: r.contact_address_3 || '',
       phone_1: r.contact_phone || '',
-      phone_2: '',
-      fax_1: '',
-      fax_2: '',
+      phone_2: r.contact_phone_2 || '',
+      fax_1: r.contact_fax || '',
+      fax_2: r.contact_fax_2 || '',
       email: r.email || '',
       contact_person: r.contact_person || '',
-      contact_position: '',
+      contact_position: r.contact_position || '',
       tax_id: r.taxid || '',
       tax_address: r.tax_address || '',
       remarks: r.remarks || '',
@@ -240,6 +325,7 @@ router.post('/clients', async (req, res) => {
   }
 });
 
+
 // PUT /api/placement/clients/:id
 router.put('/clients/:id', async (req, res) => {
   try {
@@ -254,6 +340,7 @@ router.put('/clients/:id', async (req, res) => {
     const body = req.body || {};
     const {
       type_of_client,
+      salutation,
       first_name,
       mid_name,
       last_name,
@@ -271,23 +358,10 @@ router.put('/clients/:id', async (req, res) => {
       tax_id,
       tax_address,
       remarks,
+      lob,
     } = body;
 
-    const contact_address = [address_1, address_2, address_3]
-      .filter(Boolean)
-      .join('\n');
-    const contact_phone = phone_1 || null;
-
-    let mergedRemarks = remarks || '';
-    if (phone_2) mergedRemarks += `\nAlt phone: ${phone_2}`;
-    if (fax_1) mergedRemarks += `\nFax 1: ${fax_1}`;
-    if (fax_2) mergedRemarks += `\nFax 2: ${fax_2}`;
-    if (contact_position) mergedRemarks += `\nContact position: ${contact_position}`;
-    if (first_name || last_name) {
-      mergedRemarks += `\nName parts: ${[first_name, mid_name, last_name]
-        .filter(Boolean)
-        .join(' ')}`;
-    }
+    const userId = getUserId(req);
 
     const sql = `
       UPDATE clients
@@ -301,8 +375,20 @@ router.put('/clients/:id', async (req, res) => {
         tax_address = COALESCE($7, tax_address),
         type_of_client = COALESCE($8, type_of_client),
         remarks = COALESCE($9, remarks),
-        updated_at = now()
-      WHERE id = $10
+        lob = COALESCE($10, lob),
+        updated_at = now(),
+        updated_by = COALESCE($11, updated_by),
+        salutation = COALESCE($12, salutation),
+        first_name = COALESCE($13, first_name),
+        mid_name = COALESCE($14, mid_name),
+        last_name = COALESCE($15, last_name),
+        contact_address_2 = COALESCE($16, contact_address_2),
+        contact_address_3 = COALESCE($17, contact_address_3),
+        contact_phone_2 = COALESCE($18, contact_phone_2),
+        contact_fax = COALESCE($19, contact_fax),
+        contact_fax_2 = COALESCE($20, contact_fax_2),
+        contact_position = COALESCE($21, contact_position)
+      WHERE id = $22
       RETURNING
         id,
         client_id,
@@ -310,7 +396,12 @@ router.put('/clients/:id', async (req, res) => {
         email,
         contact_person,
         contact_address,
+        contact_address_2,
+        contact_address_3,
         contact_phone,
+        contact_phone_2,
+        contact_fax,
+        contact_fax_2,
         taxid,
         tax_name,
         tax_address,
@@ -318,21 +409,40 @@ router.put('/clients/:id', async (req, res) => {
         type_of_client,
         special_flag,
         remarks,
+        salutation,
+        first_name,
+        mid_name,
+        last_name,
+        contact_position,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by
     `;
 
     const params = [
-      name || null,
-      email || null,
-      contact_person || null,
-      contact_address || null,
-      contact_phone,
-      tax_id || null,
-      tax_address || null,
-      type_of_client || null,
-      mergedRemarks || null,
-      id,
+      name || null,            // $1
+      email || null,           // $2
+      contact_person || null,  // $3
+      address_1 || null,       // $4 -> contact_address
+      phone_1 || null,         // $5 -> contact_phone
+      tax_id || null,          // $6
+      tax_address || null,     // $7
+      type_of_client || null,  // $8
+      remarks || null,         // $9
+      lob || null,             // $10
+      userId,                  // $11 updated_by
+      salutation || null,      // $12
+      first_name || null,      // $13
+      mid_name || null,        // $14
+      last_name || null,       // $15
+      address_2 || null,       // $16
+      address_3 || null,       // $17
+      phone_2 || null,         // $18
+      fax_1 || null,           // $19
+      fax_2 || null,           // $20
+      contact_position || null,// $21
+      id,                      // $22
     ];
 
     const { rows } = await db.query(sql, params);
@@ -344,24 +454,26 @@ router.put('/clients/:id', async (req, res) => {
     }
 
     const r = rows[0];
+
     const responseClient = {
       id: r.id,
+      client_id: r.client_id,
       type_of_client: r.type_of_client,
-      salutation: '',
-      first_name: '',
-      mid_name: '',
-      last_name: '',
+      salutation: r.salutation || '',
+      first_name: r.first_name || '',
+      mid_name: r.mid_name || '',
+      last_name: r.last_name || '',
       name: r.name,
       address_1: r.contact_address || '',
-      address_2: '',
-      address_3: '',
+      address_2: r.contact_address_2 || '',
+      address_3: r.contact_address_3 || '',
       phone_1: r.contact_phone || '',
-      phone_2: '',
-      fax_1: '',
-      fax_2: '',
+      phone_2: r.contact_phone_2 || '',
+      fax_1: r.contact_fax || '',
+      fax_2: r.contact_fax_2 || '',
       email: r.email || '',
       contact_person: r.contact_person || '',
-      contact_position: '',
+      contact_position: r.contact_position || '',
       tax_id: r.taxid || '',
       tax_address: r.tax_address || '',
       remarks: r.remarks || '',
@@ -385,6 +497,7 @@ router.put('/clients/:id', async (req, res) => {
     });
   }
 });
+
 
 // ------------------------------
 // PROPOSALS
@@ -479,7 +592,7 @@ router.post('/proposals', async (req, res) => {
         : `TRX-${Date.now().toString().slice(-6)}`;
 
     const reqDate = booking_date || new Date().toISOString().split('T')[0];
-
+    const userId = getUserId(req);
     const sql = `
       INSERT INTO proposals (
         transaction_number,
@@ -494,9 +607,13 @@ router.post('/proposals', async (req, res) => {
         placing_slip_number,
         quotation_slip_number,
         remarks,
-        status
+        status,
+        created_at,
+        updated_at,
+        created_by,
+        updated_by
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'DRAFT')
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'DRAFT',now(),now(),$13,$13)
       RETURNING
         id,
         transaction_number,
@@ -513,7 +630,9 @@ router.post('/proposals', async (req, res) => {
         remarks,
         status,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by
     `;
 
     const params = [
@@ -529,6 +648,7 @@ router.post('/proposals', async (req, res) => {
       placing_slip_number || null,
       qs_number || null,
       remarks || null,
+      userId,
     ];
 
     const { rows } = await db.query(sql, params);
@@ -590,9 +710,9 @@ router.put('/proposals/:id', async (req, res) => {
       placing_slip_number,
       qs_number,
       remarks,
-      status,
+      status
     } = body;
-
+    const userId = getUserId(req);
     const sql = `
       UPDATE proposals
       SET
@@ -609,7 +729,8 @@ router.put('/proposals/:id', async (req, res) => {
         quotation_slip_number = COALESCE($11, quotation_slip_number),
         remarks = COALESCE($12, remarks),
         status = COALESCE($13, status),
-        updated_at = now()
+        updated_at = now(),
+        updated_by = COALESCE($15, updated_by)
       WHERE id = $14
       RETURNING
         id,
@@ -627,7 +748,8 @@ router.put('/proposals/:id', async (req, res) => {
         remarks,
         status,
         created_at,
-        updated_at
+        updated_at,
+        updated_by
     `;
 
     const reqDate = booking_date || null;
@@ -647,6 +769,7 @@ router.put('/proposals/:id', async (req, res) => {
       remarks || null,
       status || null,
       id,
+      userId,
     ];
 
     const { rows } = await db.query(sql, params);
@@ -871,7 +994,7 @@ router.post('/policies', async (req, res) => {
       commission_net_percent != null && commission_net_percent !== ''
         ? Number(commission_net_percent)
         : gross - src;
-
+    const userId = getUserId(req);
     const sql = `
       INSERT INTO policies (
         transaction_number,
@@ -895,13 +1018,17 @@ router.post('/policies', async (req, res) => {
         sent_to_finance,
         request_date,
         sales_id,
-        remarks
+        remarks,
+        created_at,
+        updated_at,
+        created_by,
+        updated_by
       )
       VALUES (
         $1,$2,$3,$4,
         $5,$6,$7,$8,$9,
         $10,$11,$12,$13,$14,$15,$16,
-        $17,$18,false,$19,$20,$21
+        $17,$18,false,$19,$20,$21,now(),now(),$22,$22
       )
       RETURNING
         id,
@@ -928,7 +1055,9 @@ router.post('/policies', async (req, res) => {
         sales_id,
         remarks,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by
     `;
 
     const params = [
@@ -953,6 +1082,7 @@ router.post('/policies', async (req, res) => {
       reqDate,
       sales_id || null,
       remarks || null,
+      userId
     ];
 
     const { rows } = await db.query(sql, params);
@@ -1020,7 +1150,7 @@ router.put('/policies/:id', async (req, res) => {
         error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
       });
     }
-
+    const userId = getUserId(req);
     const body = req.body || {};
     const {
       transaction_number,
@@ -1091,7 +1221,8 @@ router.put('/policies/:id', async (req, res) => {
         sales_id = COALESCE($20, sales_id),
         remarks = COALESCE($21, remarks),
         sent_to_finance = COALESCE($22, sent_to_finance),
-        updated_at = now()
+        updated_at = now(),
+        updated_by = COALESCE($24, updated_by)
       WHERE id = $23
       RETURNING
         id,
@@ -1118,7 +1249,8 @@ router.put('/policies/:id', async (req, res) => {
         sales_id,
         remarks,
         created_at,
-        updated_at
+        updated_at,
+        updated_by
     `;
 
     const params = [
@@ -1145,6 +1277,7 @@ router.put('/policies/:id', async (req, res) => {
       remarks || null,
       typeof sent_to_finance === 'boolean' ? sent_to_finance : null,
       id,
+      userId,
     ];
 
     const { rows } = await db.query(sql, params);
@@ -1218,13 +1351,14 @@ router.post('/policies/:id/send-to-finance', async (req, res) => {
         error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
       });
     }
-
+    const userId = getUserId(req);
     const { rows } = await db.query(
       `
       UPDATE policies
       SET
         sent_to_finance = true,
-        updated_at = now()
+        updated_at = now(),
+        updated_by = $2
       WHERE id = $1
       RETURNING
         id,
@@ -1251,9 +1385,10 @@ router.post('/policies/:id/send-to-finance', async (req, res) => {
         sales_id,
         remarks,
         created_at,
-        updated_at
+        updated_at,
+        updated_by
       `,
-      [id]
+      [id, userId]
     );
 
     if (rows.length === 0) {
@@ -1315,5 +1450,136 @@ router.post('/policies/:id/send-to-finance', async (req, res) => {
     });
   }
 });
+
+
+// ------------------------------
+// POLICY DOCUMENTS
+// ------------------------------
+
+// GET /api/placement/policies/:id/documents
+router.get('/policies/:id/documents', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
+    });
+  }
+
+  try {
+    const docs = readPolicyDocs(id);
+    return res.json({ success: true, data: docs });
+  } catch (err) {
+    console.error('Error loading policy documents:', err);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message },
+    });
+  }
+});
+
+// POST /api/placement/policies/:id/documents
+router.post(
+  '/policies/:id/documents',
+  upload.single('file'),
+  async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'File is required' },
+      });
+    }
+
+    try {
+      const docs = readPolicyDocs(id);
+      const doc = {
+        id: Date.now().toString(),
+        filename: req.file.filename,
+        original_name: req.file.originalname,
+        size: req.file.size,
+        mime_type: req.file.mimetype,
+        uploaded_at: new Date().toISOString(),
+        url: `/uploads/${req.file.filename}`,
+      };
+
+      docs.push(doc);
+      writePolicyDocs(id, docs);
+
+      return res.json({
+        success: true,
+        data: doc,
+        message: 'Document uploaded successfully',
+      });
+    } catch (err) {
+      console.error('Error uploading policy document:', err);
+      return res.status(500).json({
+        success: false,
+        error: { code: 'SERVER_ERROR', message: err.message },
+      });
+    }
+  }
+);
+
+// POST /api/placement/policies/:policy_id/upload
+router.post(
+  '/policies/:policy_id/upload',
+  upload.single('file'),
+  (req, res) => {
+    const policyId = parseInt(req.params.policy_id, 10);
+
+    if (!policyId || !req.file) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Policy ID and file are required',
+        },
+      });
+    }
+
+    const policy = policies.find((p) => p.id === policyId);
+    if (!policy) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Policy not found' },
+      });
+    }
+
+    const { document_type, description } = req.body || {};
+    const file = req.file;
+
+    const newDocument = {
+      id: nextDocumentId++,
+      policy_id: policyId,
+      document_type: document_type || 'Policy Document',
+      file_name: file.filename,
+      original_name: file.originalname,
+      file_size: file.size,
+      file_url: `/uploads/${file.filename}`,
+      description: description || '',
+      uploaded_at: new Date(),
+      status: 'active',
+    };
+
+    documents.push(newDocument);
+
+    return res.status(201).json({
+      success: true,
+      data: newDocument,
+      message: `Document uploaded for Policy #${
+        policy.policy_number || policyId
+      }`,
+    });
+  }
+);
+
 
 module.exports = router;

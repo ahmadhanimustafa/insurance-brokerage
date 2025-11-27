@@ -26,3 +26,42 @@ ALTER TABLE public.policies
   REFERENCES public.clients (id)
   ON UPDATE NO ACTION
   ON DELETE SET NULL;
+
+-- Audit columns
+ALTER TABLE clients
+  ADD COLUMN created_by INTEGER,
+  ADD COLUMN updated_by INTEGER,
+  ADD COLUMN salutation text,
+  ADD COLUMN first_name text,
+  ADD COLUMN mid_name text,
+  ADD COLUMN last_name text,
+  ADD COLUMN contact_address_2 text,
+  ADD COLUMN contact_address_3 text,
+  ADD COLUMN contact_phone_2 varchar(50),
+  ADD COLUMN contact_fax varchar(50),
+  ADD COLUMN contact_fax_2 varchar(50),
+  ADD COLUMN contact_position varchar(50);
+
+ALTER TABLE proposals
+  ADD COLUMN created_by INTEGER,
+  ADD COLUMN updated_by INTEGER;
+
+ALTER TABLE policies
+  ADD COLUMN created_by INTEGER,
+  ADD COLUMN updated_by INTEGER;
+
+-- Policy documents table (metadata only)
+CREATE TABLE policy_documents (
+  id SERIAL PRIMARY KEY,
+  policy_id INTEGER NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+  document_type VARCHAR(100),
+  file_name VARCHAR(255) NOT NULL,
+  original_name VARCHAR(255),
+  file_size INTEGER,
+  file_url TEXT,
+  description TEXT,
+  uploaded_at TIMESTAMPTZ DEFAULT now(),
+  status VARCHAR(20) DEFAULT 'active',
+  created_by INTEGER,
+  updated_by INTEGER
+);
