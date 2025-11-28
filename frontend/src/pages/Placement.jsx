@@ -2256,21 +2256,16 @@ function Placement() {
                     </div>
                   </div>
 
-                                    <div className="row">
-                    <div className="col-md-4 mb-3">
+                  <div className="row">
+                    <div className="col-md-6 mb-3">
                       <label className="form-label">Type of Case</label>
                       <select
                         className="form-select"
-                        value={policyForm.type_of_case}
+                        value={proposalForm.type_of_case}
                         onChange={(e) =>
-                          setPolicyForm({
-                            ...policyForm,
+                          setProposalForm({
+                            ...proposalForm,
                             type_of_case: e.target.value,
-                            // Reset reference when switching type
-                            reference_policy_id:
-                              e.target.value === "Renewal"
-                                ? policyForm.reference_policy_id
-                                : "",
                           })
                         }
                       >
@@ -2281,14 +2276,14 @@ function Placement() {
                         ))}
                       </select>
                     </div>
-                    <div className="col-md-4 mb-3">
+                    <div className="col-md-6 mb-3">
                       <label className="form-label">Business Type</label>
                       <select
                         className="form-select"
-                        value={policyForm.type_of_business}
+                        value={proposalForm.type_of_business}
                         onChange={(e) =>
-                          setPolicyForm({
-                            ...policyForm,
+                          setProposalForm({
+                            ...proposalForm,
                             type_of_business: e.target.value,
                           })
                         }
