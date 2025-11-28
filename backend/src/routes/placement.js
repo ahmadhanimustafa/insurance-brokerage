@@ -172,6 +172,7 @@ router.post('/clients', async (req, res) => {
       tax_address,
       remarks,
       lob,
+      special_flag,
     } = body;
 
     if (!type_of_client || !name) {
@@ -218,8 +219,8 @@ router.post('/clients', async (req, res) => {
         updated_at
       )
       VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,$11,$12,
-        $13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+        $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,
         now(),now()
       )
       RETURNING
@@ -264,20 +265,21 @@ router.post('/clients', async (req, res) => {
       tax_address || null,        // $8  tax_address
       lob || null,                // $9  lob
       type_of_client,             // $10 type_of_client
-      remarks || null,            // $11 remarks
-      clientCode,                 // $12 client_id
-      userId,                     // $13 created_by
-      userId,                     // $14 updated_by
-      salutation || null,         // $15 salutation
-      first_name || null,         // $16 first_name
-      mid_name || null,           // $17 mid_name
-      last_name || null,          // $18 last_name
-      address_2 || null,          // $19 contact_address_2
-      address_3 || null,          // $20 contact_address_3
-      phone_2 || null,            // $21 contact_phone_2
-      fax_1 || null,              // $22 contact_fax
-      fax_2 || null,              // $23 contact_fax_2
-      contact_position || null,   // $24 contact_position
+      special_flag === true || special_flag === "true", // $11 special_flag
+      remarks || null,            // $12 remarks
+      clientCode,                 // $13 client_id
+      userId,                     // $14 created_by
+      userId,                     // $15 updated_by
+      salutation || null,         // $16 salutation
+      first_name || null,         // $17 first_name
+      mid_name || null,           // $18 mid_name
+      last_name || null,          // $19 last_name
+      address_2 || null,          // $20 contact_address_2
+      address_3 || null,          // $21 contact_address_3
+      phone_2 || null,            // $22 contact_phone_2
+      fax_1 || null,              // $23 contact_fax
+      fax_2 || null,              // $24 contact_fax_2
+      contact_position || null,   // $25 contact_position
     ];
 
     const { rows } = await db.query(insertSql, params);
@@ -359,6 +361,7 @@ router.put('/clients/:id', async (req, res) => {
       tax_address,
       remarks,
       lob,
+      special_flag,
     } = body;
 
     const userId = getUserId(req);
@@ -387,7 +390,8 @@ router.put('/clients/:id', async (req, res) => {
         contact_phone_2 = COALESCE($18, contact_phone_2),
         contact_fax = COALESCE($19, contact_fax),
         contact_fax_2 = COALESCE($20, contact_fax_2),
-        contact_position = COALESCE($21, contact_position)
+        contact_position = COALESCE($21, contact_position),
+        special_flag = COALESCE($23, special_flag)
       WHERE id = $22
       RETURNING
         id,
@@ -417,7 +421,8 @@ router.put('/clients/:id', async (req, res) => {
         created_at,
         updated_at,
         created_by,
-        updated_by
+        updated_by,
+        special_flag
     `;
 
     const params = [
@@ -443,6 +448,7 @@ router.put('/clients/:id', async (req, res) => {
       fax_2 || null,           // $20
       contact_position || null,// $21
       id,                      // $22
+      special_flag === true || special_flag === "true" // $23
     ];
 
     const { rows } = await db.query(sql, params);
@@ -968,6 +974,7 @@ router.post('/policies', async (req, res) => {
       commission_to_source,
       commission_net_percent,
       remarks,
+      reference_policy_id,
     } = body;
 
     if (!client_id || !class_of_business_id || !product_id) {
@@ -1006,6 +1013,7 @@ router.post('/policies', async (req, res) => {
         source_business_id,
         class_of_business_id,
         product_id,
+        reference_policy_id,
         case_type,
         type_of_business,
         currency,
@@ -1026,9 +1034,9 @@ router.post('/policies', async (req, res) => {
       )
       VALUES (
         $1,$2,$3,$4,
-        $5,$6,$7,$8,$9,
-        $10,$11,$12,$13,$14,$15,$16,
-        $17,$18,false,$19,$20,$21,now(),now(),$22,$22
+        $5,$6,$7,$8,$9,$10,
+        $11,$12,$13,$14,$15,$16,$17,
+        $18,$19,false,$20,$21,$22,now(),now(),$23,$24
       )
       RETURNING
         id,
@@ -1041,6 +1049,7 @@ router.post('/policies', async (req, res) => {
         source_business_id,
         class_of_business_id,
         product_id,
+        reference_policy_id,
         case_type,
         type_of_business,
         currency,
@@ -1060,30 +1069,33 @@ router.post('/policies', async (req, res) => {
         updated_by
     `;
 
-    const params = [
-      trx,
-      policy_number || null,
-      placing_slip_number || null,
-      qs_number || null,
-      client_id,
-      insurance_id || null,
-      source_business_id || null,
-      class_of_business_id,
-      product_id,
-      type_of_case || 'New',
-      type_of_business || 'Direct',
-      currency || 'IDR',
-      prem,
-      gross,
-      src,
-      net,
-      effective_date || null,
-      expiry_date || null,
-      reqDate,
-      sales_id || null,
-      remarks || null,
-      userId
+        const params = [
+      trx,                           // $1
+      policy_number || null,         // $2
+      placing_slip_number || null,   // $3
+      qs_number || null,             // $4
+      client_id,                     // $5
+      insurance_id || null,          // $6
+      source_business_id || null,    // $7
+      class_of_business_id,          // $8
+      product_id,                    // $9
+      reference_policy_id || null,   // $10
+      type_of_case || 'New',         // $11
+      type_of_business || 'Direct',  // $12
+      currency || 'IDR',             // $13
+      prem,                          // $14
+      gross,                         // $15
+      src,                           // $16
+      net,                           // $17
+      effective_date || null,        // $18
+      expiry_date || null,           // $19
+      reqDate,                       // $20
+      sales_id || null,              // $21
+      remarks || null,               // $22
+      userId,                        // $23
+      userId,                        // $24
     ];
+
 
     const { rows } = await db.query(sql, params);
     const r = rows[0];
@@ -1124,6 +1136,8 @@ router.post('/policies', async (req, res) => {
       remarks: r.remarks || '',
       created_at: r.created_at,
       updated_at: r.updated_at,
+      reference_policy_id: r.reference_policy_id,
+
     };
 
     return res.json({
@@ -1175,6 +1189,7 @@ router.put('/policies/:id', async (req, res) => {
       commission_net_percent,
       remarks,
       sent_to_finance,
+      reference_policy_id,
     } = body;
 
     const prem =
@@ -1208,22 +1223,23 @@ router.put('/policies/:id', async (req, res) => {
         source_business_id = COALESCE($7, source_business_id),
         class_of_business_id = COALESCE($8, class_of_business_id),
         product_id = COALESCE($9, product_id),
-        case_type = COALESCE($10, case_type),
-        type_of_business = COALESCE($11, type_of_business),
-        currency = COALESCE($12, currency),
-        premium_amount = COALESCE($13, premium_amount),
-        commission_gross = COALESCE($14, commission_gross),
-        commission_to_source = COALESCE($15, commission_to_source),
-        commission_net_percent = COALESCE($16, commission_net_percent),
-        effective_date = COALESCE($17, effective_date),
-        expiry_date = COALESCE($18, expiry_date),
-        request_date = COALESCE($19, request_date),
-        sales_id = COALESCE($20, sales_id),
-        remarks = COALESCE($21, remarks),
-        sent_to_finance = COALESCE($22, sent_to_finance),
+        reference_policy_id = COALESCE($10, reference_policy_id),
+        case_type = COALESCE($11, case_type),
+        type_of_business = COALESCE($12, type_of_business),
+        currency = COALESCE($13, currency),
+        premium_amount = COALESCE($14, premium_amount),
+        commission_gross = COALESCE($15, commission_gross),
+        commission_to_source = COALESCE($16, commission_to_source),
+        commission_net_percent = COALESCE($17, commission_net_percent),
+        effective_date = COALESCE($18, effective_date),
+        expiry_date = COALESCE($19, expiry_date),
+        request_date = COALESCE($20, request_date),
+        sales_id = COALESCE($21, sales_id),
+        remarks = COALESCE($22, remarks),
+        sent_to_finance = COALESCE($23, sent_to_finance),
         updated_at = now(),
-        updated_by = COALESCE($24, updated_by)
-      WHERE id = $23
+        updated_by = COALESCE($25, updated_by)
+      WHERE id = $24
       RETURNING
         id,
         transaction_number,
@@ -1235,6 +1251,7 @@ router.put('/policies/:id', async (req, res) => {
         source_business_id,
         class_of_business_id,
         product_id,
+        reference_policy_id,
         case_type,
         type_of_business,
         currency,
@@ -1253,32 +1270,34 @@ router.put('/policies/:id', async (req, res) => {
         updated_by
     `;
 
-    const params = [
-      transaction_number || null,
-      policy_number || null,
-      placing_slip_number || null,
-      qs_number || null,
-      client_id || null,
-      insurance_id || null,
-      source_business_id || null,
-      class_of_business_id || null,
-      product_id || null,
-      type_of_case || null,
-      type_of_business || null,
-      currency || null,
-      prem,
-      gross,
-      src,
-      net,
-      effective_date || null,
-      expiry_date || null,
-      booking_date || null,
-      sales_id || null,
-      remarks || null,
-      typeof sent_to_finance === 'boolean' ? sent_to_finance : null,
-      id,
-      userId,
+        const params = [
+      transaction_number || null,                                // $1
+      policy_number || null,                                     // $2
+      placing_slip_number || null,                               // $3
+      qs_number || null,                                         // $4
+      client_id || null,                                         // $5
+      insurance_id || null,                                      // $6
+      source_business_id || null,                                // $7
+      class_of_business_id || null,                              // $8
+      product_id || null,                                        // $9
+      reference_policy_id || null,                               // $10
+      type_of_case || null,                                      // $11
+      type_of_business || null,                                  // $12
+      currency || null,                                          // $13
+      prem,                                                      // $14
+      gross,                                                     // $15
+      src,                                                       // $16
+      net,                                                       // $17
+      effective_date || null,                                    // $18
+      expiry_date || null,                                       // $19
+      booking_date || null,                                      // $20
+      sales_id || null,                                          // $21
+      remarks || null,                                           // $22
+      typeof sent_to_finance === 'boolean' ? sent_to_finance : null, // $23
+      id,                                                        // $24
+      userId,                                                    // $25
     ];
+
 
     const { rows } = await db.query(sql, params);
     if (rows.length === 0) {
@@ -1325,6 +1344,7 @@ router.put('/policies/:id', async (req, res) => {
       remarks: r.remarks || '',
       created_at: r.created_at,
       updated_at: r.updated_at,
+      reference_policy_id: r.reference_policy_id,
     };
 
     return res.json({
@@ -1458,8 +1478,8 @@ router.post('/policies/:id/send-to-finance', async (req, res) => {
 
 // GET /api/placement/policies/:id/documents
 router.get('/policies/:id/documents', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) {
+  const policyId = parseInt(req.params.id, 10);
+  if (!policyId) {
     return res.status(400).json({
       success: false,
       error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
@@ -1467,8 +1487,33 @@ router.get('/policies/:id/documents', async (req, res) => {
   }
 
   try {
-    const docs = readPolicyDocs(id);
-    return res.json({ success: true, data: docs });
+    const { rows } = await db.query(
+      `
+      SELECT
+        id,
+        policy_id,
+        document_type,
+        file_name,
+        original_name,
+        file_size,
+        file_url,
+        description,
+        uploaded_at,
+        status,
+        created_by,
+        updated_by
+      FROM policy_documents
+      WHERE policy_id = $1
+        AND status = 'active'
+      ORDER BY uploaded_at DESC, id DESC
+      `,
+      [policyId]
+    );
+
+    return res.json({
+      success: true,
+      data: rows,
+    });
   } catch (err) {
     console.error('Error loading policy documents:', err);
     return res.status(500).json({
@@ -1483,8 +1528,9 @@ router.post(
   '/policies/:id/documents',
   upload.single('file'),
   async (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    if (!id) {
+    const policyId = parseInt(req.params.id, 10);
+
+    if (!policyId) {
       return res.status(400).json({
         success: false,
         error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
@@ -1499,24 +1545,78 @@ router.post(
     }
 
     try {
-      const docs = readPolicyDocs(id);
-      const doc = {
-        id: Date.now().toString(),
-        filename: req.file.filename,
-        original_name: req.file.originalname,
-        size: req.file.size,
-        mime_type: req.file.mimetype,
-        uploaded_at: new Date().toISOString(),
-        url: `/uploads/${req.file.filename}`,
-      };
+      // pastikan policy ada
+      const { rows: policyRows } = await db.query(
+        'SELECT id, policy_number FROM policies WHERE id = $1',
+        [policyId]
+      );
+      if (policyRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Policy not found' },
+        });
+      }
 
-      docs.push(doc);
-      writePolicyDocs(id, docs);
+      const policy = policyRows[0];
+      const file = req.file;
+      const { document_type, description } = req.body || {};
+      const userId = getUserId(req);
+
+      const insertSql = `
+        INSERT INTO policy_documents (
+          policy_id,
+          document_type,
+          file_name,
+          original_name,
+          file_size,
+          file_url,
+          description,
+          uploaded_at,
+          status,
+          created_by,
+          updated_by
+        )
+        VALUES (
+          $1,$2,$3,$4,$5,$6,$7,
+          now(),
+          'active',
+          $8,$8
+        )
+        RETURNING
+          id,
+          policy_id,
+          document_type,
+          file_name,
+          original_name,
+          file_size,
+          file_url,
+          description,
+          uploaded_at,
+          status,
+          created_by,
+          updated_by
+      `;
+
+      const params = [
+        policyId,                                // $1 policy_id
+        document_type || 'Policy Document',      // $2
+        file.filename,                           // $3 file_name
+        file.originalname || null,               // $4
+        file.size || null,                       // $5
+        `/uploads/${file.filename}`,             // $6
+        description || '',                       // $7
+        userId,                                  // $8 created_by & updated_by
+      ];
+
+      const { rows } = await db.query(insertSql, params);
+      const doc = rows[0];
 
       return res.json({
         success: true,
         data: doc,
-        message: 'Document uploaded successfully',
+        message: `Document uploaded for Policy #${
+          policy.policy_number || policyId
+        }`,
       });
     } catch (err) {
       console.error('Error uploading policy document:', err);
@@ -1528,58 +1628,82 @@ router.post(
   }
 );
 
-// POST /api/placement/policies/:policy_id/upload
-router.post(
-  '/policies/:policy_id/upload',
-  upload.single('file'),
-  (req, res) => {
-    const policyId = parseInt(req.params.policy_id, 10);
+// DELETE /api/placement/policies/:id/documents/:docId
+router.delete('/policies/:id/documents/:docId', async (req, res) => {
+  const policyId = parseInt(req.params.id, 10);
+  const docId = parseInt(req.params.docId, 10);
 
-    if (!policyId || !req.file) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Policy ID and file are required',
-        },
-      });
-    }
-
-    const policy = policies.find((p) => p.id === policyId);
-    if (!policy) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 'NOT_FOUND', message: 'Policy not found' },
-      });
-    }
-
-    const { document_type, description } = req.body || {};
-    const file = req.file;
-
-    const newDocument = {
-      id: nextDocumentId++,
-      policy_id: policyId,
-      document_type: document_type || 'Policy Document',
-      file_name: file.filename,
-      original_name: file.originalname,
-      file_size: file.size,
-      file_url: `/uploads/${file.filename}`,
-      description: description || '',
-      uploaded_at: new Date(),
-      status: 'active',
-    };
-
-    documents.push(newDocument);
-
-    return res.status(201).json({
-      success: true,
-      data: newDocument,
-      message: `Document uploaded for Policy #${
-        policy.policy_number || policyId
-      }`,
+  if (!policyId || !docId) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Policy ID and document ID are required',
+      },
     });
   }
-);
 
+  try {
+    // ambil dulu untuk tahu file_name
+    const { rows } = await db.query(
+      `
+      SELECT
+        id,
+        file_name
+      FROM policy_documents
+      WHERE id = $1
+        AND policy_id = $2
+        AND status = 'active'
+      `,
+      [docId, policyId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Document not found' },
+      });
+    }
+
+    const doc = rows[0];
+    const userId = getUserId(req);
+
+    // soft delete di DB
+    await db.query(
+      `
+      UPDATE policy_documents
+      SET
+        status = 'deleted',
+        updated_by = $3
+      WHERE id = $1
+        AND policy_id = $2
+      `,
+      [docId, policyId, userId]
+    );
+
+    // best-effort hapus file fisik
+    if (doc.file_name) {
+      const filePath = path.join(uploadDir, doc.file_name);
+      if (fs.existsSync(filePath)) {
+        fs.unlink(filePath, (err) => {
+          if (err) {
+            console.error('Error deleting file from disk:', err);
+          }
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Document deleted',
+    });
+  } catch (err) {
+    console.error('Error deleting policy document:', err);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message },
+    });
+  }
+});
 
 module.exports = router;

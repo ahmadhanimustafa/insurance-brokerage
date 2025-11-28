@@ -116,6 +116,8 @@ function Placement() {
     tax_id: "",
     tax_address: "",
     remarks: "",
+    lob: "",
+    special_flag: false,
   };
 
   const [clientForm, setClientForm] = useState(initialClientForm);
@@ -209,6 +211,9 @@ function Placement() {
   const [placingValidation, setPlacingValidation] = useState("");
   const [qsValidation, setQsValidation] = useState("");
   const fileInputRef = useRef(null);
+  const [docPreviewVisible, setDocPreviewVisible] = useState(false);
+  const [docPreviewItem, setDocPreviewItem] = useState(null);
+
 
   // =============================
   // Policy Document handlers
@@ -397,6 +402,52 @@ function Placement() {
 
     setEmailValidation("✅ Email looks good");
     return true;
+  };
+  const getDocType = (doc) => {
+    if (!doc) return { kind: "other" };
+    const mime = (doc.mime_type || "").toLowerCase();
+    const name = (doc.original_name || doc.filename || "").toLowerCase();
+
+    const isImage = mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+    const isVideo = mime.startsWith("video/") || /\.(mp4|webm|ogg|mov)$/i.test(name);
+    const isAudio = mime.startsWith("audio/") || /\.(mp3|wav|ogg)$/i.test(name);
+    const isPdf = mime === "application/pdf" || name.endsWith(".pdf");
+    const isOffice =
+      /\.(docx?|xlsx?|pptx?)$/i.test(name) ||
+      [
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ].includes(mime);
+
+    if (isImage) return { kind: "image" };
+    if (isVideo) return { kind: "video" };
+    if (isAudio) return { kind: "audio" };
+    if (isPdf) return { kind: "pdf" };
+    if (isOffice) return { kind: "office" };
+    return { kind: "other" };
+  };
+  const handleDeletePolicyDocument = async (docId) => {
+    if (!editingPolicy || !editingPolicy.id) {
+      alert("Open a saved policy before deleting documents.");
+      return;
+    }
+
+    const confirmDelete = window.confirm("Delete this document?");
+    if (!confirmDelete) return;
+
+    try {
+      await api.delete(`/placement/policies/${editingPolicy.id}/documents/${docId}`);
+      setPolicyDocuments((prev) =>
+        prev.filter((d) => String(d.id) !== String(docId))
+      );
+    } catch (err) {
+      console.error("Error deleting policy document:", err);
+      setError("Failed to delete policy document.");
+    }
   };
 
 
@@ -1119,6 +1170,30 @@ function Placement() {
     }
     return matchesSearch && statusString === policyStatusFilter;
   });
+  const renewalCandidates = policies.filter((p) => {
+    if (!p.policy_number) return false;
+    if (!policyForm.client_id || !policyForm.class_of_business_id || !policyForm.product_id) {
+      return false;
+    }
+
+    const sameClient =
+      String(p.client_id) === String(policyForm.client_id);
+    const sameCob =
+      String(p.class_of_business_id) === String(policyForm.class_of_business_id);
+    const sameProduct =
+      String(p.product_id) === String(policyForm.product_id);
+    const notCurrent =
+      !editingPolicy || String(p.id) !== String(editingPolicy.id);
+
+    return sameClient && sameCob && sameProduct && notCurrent;
+  }).sort((a, b) => {
+    // Most recent effective date first (fallback to id)
+    const aDate = a.effective_date || "";
+    const bDate = b.effective_date || "";
+    if (aDate === bDate) return (b.id || 0) - (a.id || 0);
+    return bDate.localeCompare(aDate);
+  });
+
 
   // =============================
   // Render
@@ -1939,7 +2014,47 @@ function Placement() {
                       </div>
                     </div>
                   </fieldset>
-
+                  <fieldset className="border p-3 mb-3">
+                    <legend className="w-auto px-2">Additional Info</legend>
+                    <div className="row">
+                      <div className="col-md-6 mb-3">
+                        <label className="form-label">LOB (Line of Business)</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={clientForm.lob || ""}
+                          onChange={(e) =>
+                            setClientForm({
+                              ...clientForm,
+                              lob: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="col-md-6 mb-3 d-flex align-items-center">
+                        <div className="form-check mt-4">
+                          <input
+                            className="form-check-input"
+                            type="checkbox"
+                            id="clientSpecialFlag"
+                            checked={!!clientForm.special_flag}
+                            onChange={(e) =>
+                              setClientForm({
+                                ...clientForm,
+                                special_flag: e.target.checked,
+                              })
+                            }
+                          />
+                          <label
+                            className="form-check-label"
+                            htmlFor="clientSpecialFlag"
+                          >
+                            Special Flag
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </fieldset>
                   <div className="mb-3">
                     <label className="form-label">Remarks</label>
                     <ReactQuill
@@ -2141,16 +2256,21 @@ function Placement() {
                     </div>
                   </div>
 
-                  <div className="row">
+                                    <div className="row">
                     <div className="col-md-4 mb-3">
                       <label className="form-label">Type of Case</label>
                       <select
                         className="form-select"
-                        value={proposalForm.type_of_case}
+                        value={policyForm.type_of_case}
                         onChange={(e) =>
-                          setProposalForm({
-                            ...proposalForm,
+                          setPolicyForm({
+                            ...policyForm,
                             type_of_case: e.target.value,
+                            // Reset reference when switching type
+                            reference_policy_id:
+                              e.target.value === "Renewal"
+                                ? policyForm.reference_policy_id
+                                : "",
                           })
                         }
                       >
@@ -2165,10 +2285,10 @@ function Placement() {
                       <label className="form-label">Business Type</label>
                       <select
                         className="form-select"
-                        value={proposalForm.type_of_business}
+                        value={policyForm.type_of_business}
                         onChange={(e) =>
-                          setProposalForm({
-                            ...proposalForm,
+                          setPolicyForm({
+                            ...policyForm,
                             type_of_business: e.target.value,
                           })
                         }
@@ -2181,7 +2301,6 @@ function Placement() {
                       </select>
                     </div>
                   </div>
-
                   <div className="row">
                     <div className="col-md-6 mb-3">
                       <label className="form-label">Placing Slip No</label>
@@ -2480,6 +2599,36 @@ function Placement() {
                         ))}
                       </select>
                     </div>
+                    {policyForm.type_of_case === "Renewal" && (
+                      <div className="col-md-4 mb-3">
+                        <label className="form-label">Previous Policy No</label>
+                        <select
+                          className="form-select"
+                          value={policyForm.reference_policy_id || ""}
+                          onChange={(e) =>
+                            setPolicyForm({
+                              ...policyForm,
+                              reference_policy_id: e.target.value,
+                            })
+                          }
+                          disabled={renewalCandidates.length === 0}
+                        >
+                          <option value="">
+                            {renewalCandidates.length === 0
+                              ? "No matching previous policies"
+                              : "Select previous policy"}
+                          </option>
+                          {renewalCandidates.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.policy_number}{" "}
+                              {p.effective_date && p.expiry_date
+                                ? `(${p.effective_date} – ${p.expiry_date})`
+                                : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     
                   </div>
 
@@ -2713,77 +2862,123 @@ function Placement() {
                     />
                   </div>
                   <div className="mb-3">
-                    <label className="form-label">Upload Documents</label>
-                    {editingPolicy && editingPolicy.id ? (
-                      <>
-                        <input
-                          type="file"
-                          className="form-control mb-2"
-                          ref={policyDocInputRef}
-                          onChange={handlePolicyFileChange}
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-outline-secondary btn-sm mb-2"
-                          onClick={handleUploadPolicyDocument}
-                          disabled={policyDocUploading}
-                        >
-                          {policyDocUploading ? 'Uploading...' : 'Upload Document'}
-                        </button>
-                      </>
-                    ) : (
-                      <small className="text-muted">
-                        Save the policy first, then reopen it to upload documents.
-                      </small>
-                    )}
-                    {/* Hidden file input */}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      style={{ display: "none" }}
-                      onChange={handleFileChange}
-                    />
+                  <label className="form-label">Upload Documents</label>
+                  {editingPolicy && editingPolicy.id ? (
+                    <>
+                      <input
+                        type="file"
+                        className="form-control mb-2"
+                        ref={policyDocInputRef}
+                        onChange={handlePolicyFileChange}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm mb-2"
+                        onClick={handleUploadPolicyDocument}
+                        disabled={policyDocUploading}
+                      >
+                        {policyDocUploading ? "Uploading..." : "Upload Document"}
+                      </button>
+                    </>
+                  ) : (
+                    <small className="text-muted">
+                      Save the policy first, then reopen it to upload documents.
+                    </small>
+                  )}
 
-                    {policyDocuments && policyDocuments.length > 0 ? (
+                  {/* Hidden file input (still used by handleFileChange if needed) */}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    style={{ display: "none" }}
+                    onChange={handleFileChange}
+                  />
+
+                  <div className="mt-3">
+                    <label className="form-label">Existing Documents</label>
+                    {policyDocuments.length === 0 ? (
+                      <div className="text-muted">No documents uploaded for this policy.</div>
+                    ) : (
                       <div className="table-responsive">
                         <table className="table table-sm align-middle">
                           <thead className="table-light">
                             <tr>
-                              <th>File</th>
+                              <th>Type</th>
+                              <th>Name</th>
                               <th>Size</th>
                               <th>Uploaded At</th>
-                              <th />
+                              <th className="text-end">Actions</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {policyDocuments.map((d) => (
-                              <tr key={d.id}>
-                                <td>{d.original_name || d.file_name}</td>
-                                <td>{formatFileSize(d.size || d.file_size)}</td>
-                                <td>{formatDateTime(d.uploaded_at)}</td>
-                                <td className="text-end">
-                                  {(d.file_url || d.url) && (
-                                    <a
-                                      href={`${API_ROOT}${d.file_url || d.url}`}
-                                      className="btn btn-sm btn-outline-secondary"
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      Download
-                                    </a>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
+                            {policyDocuments.map((doc) => {
+                              const { kind } = getDocType(doc);
+                              const icon =
+                                kind === "image"
+                                  ? "🖼️"
+                                  : kind === "video"
+                                  ? "🎬"
+                                  : kind === "audio"
+                                  ? "🎵"
+                                  : kind === "pdf"
+                                  ? "📄"
+                                  : kind === "office"
+                                  ? "📊"
+                                  : "📁";
+
+                              const url = doc.file_url || doc.url || "";
+                              const uploadedAt = formatDateTime(
+                                doc.created_at || doc.updated_at
+                              );
+
+                              return (
+                                <tr key={doc.id}>
+                                  <td>{icon}</td>
+                                  <td>{doc.original_name || doc.file_name || doc.filename}</td>
+                                  <td>{formatFileSize(doc.file_size || doc.size)}</td>
+                                  <td>{uploadedAt || "-"}</td>
+                                  <td className="text-end">
+                                    <div className="btn-group btn-group-sm">
+                                      {url && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="btn btn-outline-secondary"
+                                            onClick={() => {
+                                              setDocPreviewItem(doc);
+                                              setDocPreviewVisible(true);
+                                            }}
+                                          >
+                                            Preview
+                                          </button>
+                                          <a
+                                            href={`${API_ROOT}${url}`}
+                                            className="btn btn-outline-primary"
+                                            target="_blank"
+                                            rel="noreferrer"
+                                          >
+                                            Download
+                                          </a>
+                                        </>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-danger"
+                                        onClick={() => handleDeletePolicyDocument(doc.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
-                    ) : (
-                      <small className="text-muted">No documents uploaded yet.</small>
                     )}
                   </div>
-                  
-
+                </div>
 
                   <div className="d-flex justify-content-end">
                     <button
@@ -2819,6 +3014,99 @@ function Placement() {
           </div>
         </div>
       )}
+      {/* DOCUMENT PREVIEW MODAL */}
+        {docPreviewVisible && docPreviewItem && (
+          <div
+            className="modal fade show d-block"
+            style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1100 }}
+          >
+            <div className="modal-dialog modal-xl modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header bg-dark text-white">
+                  <h5 className="modal-title">
+                    Preview: {docPreviewItem.original_name || docPreviewItem.file_name}
+                  </h5>
+                  <button
+                    className="btn-close btn-close-white"
+                    onClick={() => {
+                      setDocPreviewVisible(false);
+                      setDocPreviewItem(null);
+                    }}
+                  ></button>
+                </div>
+                <div className="modal-body" style={{ height: "70vh" }}>
+                  {(() => {
+                    const fileUrl = `${API_ROOT}${docPreviewItem.file_url || docPreviewItem.url}`;
+                    const { kind } = getDocType(docPreviewItem);
+
+                    if (kind === "image") {
+                      return (
+                        <img
+                          src={fileUrl}
+                          alt="Document preview"
+                          style={{ maxWidth: "100%", maxHeight: "100%", display: "block", margin: "0 auto" }}
+                        />
+                      );
+                    }
+
+                    if (kind === "video") {
+                      return (
+                        <video
+                          src={fileUrl}
+                          controls
+                          style={{ width: "100%", height: "100%" }}
+                        />
+                      );
+                    }
+
+                    if (kind === "audio") {
+                      return (
+                        <audio src={fileUrl} controls style={{ width: "100%" }} />
+                      );
+                    }
+
+                    // PDF or Office / others: try iframe, browser may download
+                    return (
+                      <div className="h-100 d-flex flex-column">
+                        <iframe
+                          title="Document preview"
+                          src={fileUrl}
+                          style={{ flex: 1, border: "none" }}
+                        />
+                        <small className="text-muted mt-2">
+                          If the file doesn&apos;t render in this preview,
+                          your browser may directly download it instead.
+                        </small>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="modal-footer">
+                  {(docPreviewItem.file_url || docPreviewItem.url) && (
+                    <a
+                      href={`${API_ROOT}${docPreviewItem.file_url || docPreviewItem.url}`}
+                      className="secondary"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open / Download
+                    </a>
+                  )}
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setDocPreviewVisible(false);
+                      setDocPreviewItem(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
     </div>
   );
 }
