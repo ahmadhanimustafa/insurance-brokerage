@@ -48,7 +48,8 @@ ALTER TABLE proposals
 
 ALTER TABLE policies
   ADD COLUMN created_by INTEGER,
-  ADD COLUMN updated_by INTEGER;
+  ADD COLUMN updated_by INTEGER,
+  ADD COLUMN reference_policy_id integer NULL;
 
 -- Policy documents table (metadata only)
 CREATE TABLE policy_documents (

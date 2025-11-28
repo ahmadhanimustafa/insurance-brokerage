@@ -643,8 +643,8 @@ router.post('/proposals', async (req, res) => {
 
     const params = [
       trx,
-      type_of_case || 'New',
-      type_of_business || 'Direct',
+      type_of_case,
+      type_of_business,
       client_id,
       source_business_id || null,
       class_of_business_id,
