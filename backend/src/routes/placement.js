@@ -591,6 +591,11 @@ router.post('/proposals', async (req, res) => {
         },
       });
     }
+    const typeCase =
+      body.type_of_case === "Renewal" ? "Renewal" : "New";
+
+    const typeBusiness =
+      body.type_of_business === "Non Direct" ? "Non Direct" : "Direct";
 
     const trx =
       transaction_number && transaction_number.trim()
@@ -643,8 +648,8 @@ router.post('/proposals', async (req, res) => {
 
     const params = [
       trx,
-      type_of_case,
-      type_of_business,
+      typeCase,
+      typeBusiness,
       client_id,
       source_business_id || null,
       class_of_business_id,
@@ -719,6 +724,18 @@ router.put('/proposals/:id', async (req, res) => {
       status
     } = body;
     const userId = getUserId(req);
+    let normalizedTypeCase = null;
+      if (typeof type_of_case === "string") {
+        normalizedTypeCase =
+          type_of_case === "Renewal" ? "Renewal" : "New";
+      }
+
+      let normalizedTypeBusiness = null;
+      if (typeof type_of_business === "string") {
+        normalizedTypeBusiness =
+          type_of_business === "Non Direct" ? "Non Direct" : "Direct";
+      }
+
     const sql = `
       UPDATE proposals
       SET
@@ -762,8 +779,8 @@ router.put('/proposals/:id', async (req, res) => {
 
     const params = [
       transaction_number || null,
-      type_of_case || null,
-      type_of_business || null,
+      normalizedTypeCase,
+      normalizedTypeBusiness,
       client_id || null,
       source_business_id || null,
       class_of_business_id || null,
@@ -1080,9 +1097,9 @@ router.post('/policies', async (req, res) => {
       class_of_business_id,          // $8
       product_id,                    // $9
       reference_policy_id || null,   // $10
-      type_of_case || 'New',         // $11
-      type_of_business || 'Direct',  // $12
-      currency || 'IDR',             // $13
+      type_of_case,         // $11
+      type_of_business ,  // $12
+      currency ,             // $13
       prem,                          // $14
       gross,                         // $15
       src,                           // $16

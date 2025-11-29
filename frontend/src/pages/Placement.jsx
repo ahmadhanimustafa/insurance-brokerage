@@ -141,7 +141,7 @@ function Placement() {
   const emptyProposalForm = {
     id: "",
     transaction_number: "",
-    type_of_case: "New",
+    type_of_case: "",
     reference_policy_id: "",
     client_id: "",
     insurance_id: "", // still exists in backend but NOT used in UI here
@@ -149,11 +149,11 @@ function Placement() {
     sales_id: "",
     class_of_business_id: "",
     product_id: "",
-    type_of_business: "Direct",
+    type_of_business: "",
     effective_date: "", // used as "Booking Date" in UI
     expiry_date: "",
     premium_amount: "",
-    currency: "IDR",
+    currency: "",
     commission_gross: "",
     commission_to_source: "",
     commission_net_percent: "",
@@ -898,6 +898,7 @@ function Placement() {
     setError("");
     setSuccess("");
     try {
+      console.log("🔍 proposalForm before save:", proposalForm);
       const payload = { ...proposalForm };
 
       if (editingProposal) {
@@ -2269,6 +2270,7 @@ function Placement() {
                           })
                         }
                       >
+                        <option value="">Select Type of Case</option>
                         {typeOfCaseOptions.map((opt) => (
                           <option key={opt} value={opt}>
                             {opt}
@@ -2288,6 +2290,7 @@ function Placement() {
                           })
                         }
                       >
+                        <option value="">Select Business Type</option>
                         {typeOfBusinessOptions.map((opt) => (
                           <option key={opt} value={opt}>
                             {opt}
