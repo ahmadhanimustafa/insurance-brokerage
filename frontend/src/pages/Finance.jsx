@@ -54,6 +54,7 @@ function Finance() {
   const [paymentType, setPaymentType] = useState('ANNUAL');
   const [paymentCount, setPaymentCount] = useState(1);
   const [installmentsDraft, setInstallmentsDraft] = useState([]); // [{ installment, entries: [] }]
+  const [externalInvoiceNumber, setExternalInvoiceNumber] = useState(''); // External invoice reference
 
   useEffect(() => {
     loadAll();
@@ -421,6 +422,7 @@ function Finance() {
     setCurrentPolicy(null);
     setCurrentSchedule(null);
     setInstallmentsDraft([]);
+    setExternalInvoiceNumber('');
     setError('');
   };
 
@@ -595,6 +597,8 @@ function Finance() {
           type_of_business: businessType,
           commission_gross: currentPolicy.commission_gross,
           commission_to_source: currentPolicy.commission_to_source,
+          effective_date: currentPolicy.effective_date, // Required for invoice generation
+          external_invoice_number: externalInvoiceNumber || null, // Optional reference
           installments: installmentsDraft
         };
 
@@ -1391,10 +1395,26 @@ function Finance() {
 
                 <form onSubmit={handleSaveModal}>
                   {modalMode === 'create' && currentPolicy && (
-                    <fieldset className="border p-3 mb-3">
-                      <legend className="w-auto px-2">
-                        Payment Type & Generate Installments
-                      </legend>
+                    <>
+                      <div className="mb-3">
+                        <label className="form-label">
+                          External Invoice Number (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="Reference number from other company"
+                          value={externalInvoiceNumber}
+                          onChange={(e) => setExternalInvoiceNumber(e.target.value)}
+                        />
+                        <small className="text-muted">
+                          Enter invoice reference from external party if available
+                        </small>
+                      </div>
+                      <fieldset className="border p-3 mb-3">
+                        <legend className="w-auto px-2">
+                          Payment Type & Generate Installments
+                        </legend>
                       <div className="row align-items-end">
                         <div className="col-md-4 mb-2">
                           <label className="form-label">Payment Type</label>
@@ -1447,6 +1467,7 @@ function Finance() {
                         {currentPolicy.commission_to_source || 0}%
                       </small>
                     </fieldset>
+                    </>
                   )}
 
                   <fieldset className="border p-3 mb-3">
