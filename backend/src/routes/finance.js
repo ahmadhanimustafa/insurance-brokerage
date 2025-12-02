@@ -531,23 +531,36 @@ router.post('/schedules', async (req, res) => {
 });
 
 // PUT update schedule (including installments)
-router.put('/schedules/:id', (req, res) => {
+router.put('/schedules/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const idx = schedules.findIndex((s) => s.id === id);
 
-    if (idx === -1) {
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Invalid schedule ID' }
+      });
+    }
+
+    // Check if schedule exists
+    const scheduleCheck = await db.query(
+      'SELECT id, type_of_business, effective_date FROM finance_schedules WHERE id = $1',
+      [id]
+    );
+
+    if (scheduleCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Schedule not found' }
       });
     }
 
-    const current = schedules[idx];
+    const current = scheduleCheck.rows[0];
 
     const {
       currency,
       type_of_business,
+      external_invoice_number,
       installments // optional updated installments
     } = req.body;
 
@@ -556,24 +569,160 @@ router.put('/schedules/:id', (req, res) => {
         ? normalizeBusinessType(type_of_business)
         : current.type_of_business;
 
-    let updated = {
-      ...current,
-      currency: currency || current.currency,
-      type_of_business: normalizedType,
-      updated_at: new Date()
-    };
+    // Update schedule
+    if (currency || type_of_business !== undefined || external_invoice_number !== undefined) {
+      const updateSql = `
+        UPDATE finance_schedules
+        SET
+          currency = COALESCE($1, currency),
+          type_of_business = COALESCE($2, type_of_business),
+          external_invoice_number = COALESCE($3, external_invoice_number),
+          updated_at = now()
+        WHERE id = $4
+      `;
+      await db.query(updateSql, [
+        currency || null,
+        normalizedType,
+        external_invoice_number !== undefined ? external_invoice_number : null,
+        id
+      ]);
+    }
 
+    // Update installments if provided
     if (installments !== undefined) {
+      // Delete existing installments and entries
+      await db.query(
+        'DELETE FROM finance_installments WHERE schedule_id = $1',
+        [id]
+      );
+
+      // Rebuild installments from body
       const rebuilt = buildInstallmentsFromBody(
         { installments },
         normalizedType
       );
-      updated.installments = rebuilt;
+
+      // Insert new installments and entries
+      for (const inst of rebuilt) {
+        const instSql = `
+          INSERT INTO finance_installments (schedule_id, installment_number)
+          VALUES ($1, $2)
+          RETURNING id
+        `;
+        const instResult = await db.query(instSql, [id, inst.installment]);
+        const installmentId = instResult.rows[0].id;
+
+        for (const entry of inst.entries) {
+          // Generate invoice number if not already present
+          let invoiceNumber = entry.invoice_number;
+          let invoiceType = entry.invoice_type || getInvoiceType(entry.description);
+
+          if (!invoiceNumber) {
+            invoiceNumber = await generateInvoiceNumber({
+              effectiveDate: current.effective_date,
+              installmentNumber: inst.installment,
+              invoiceType: invoiceType
+            });
+          }
+
+          const entrySql = `
+            INSERT INTO finance_entries (
+              installment_id, description, due_date, amount, status, paid_date,
+              paid_amount, invoice_number, invoice_type
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `;
+          await db.query(entrySql, [
+            installmentId,
+            entry.description,
+            entry.due_date,
+            entry.amount,
+            entry.status || 'NOT_DUE',
+            entry.paid_date || null,
+            entry.paid_amount || 0,
+            invoiceNumber,
+            invoiceType
+          ]);
+        }
+      }
     }
 
-    schedules[idx] = updated;
+    // Reload updated schedule
+    const updatedSchedule = await db.query(`
+      SELECT
+        id, policy_id, client_id, insurance_id, source_business_id,
+        currency, type_of_business, commission_gross, commission_to_source,
+        internal_invoice_number, external_invoice_number, effective_date,
+        created_at, updated_at
+      FROM finance_schedules
+      WHERE id = $1
+    `, [id]);
 
-    const enriched = computeSummary(updated);
+    // Load installments and entries
+    const installmentsResult = await db.query(`
+      SELECT id, installment_number
+      FROM finance_installments
+      WHERE schedule_id = $1
+      ORDER BY installment_number
+    `, [id]);
+
+    const loadedInstallments = [];
+    for (const instRow of installmentsResult.rows) {
+      const entriesResult = await db.query(`
+        SELECT id, description, due_date, amount, status, paid_date,
+               paid_amount, invoice_number, invoice_type,
+               receipt_file_name, receipt_file_url, receipt_uploaded_at
+        FROM finance_entries
+        WHERE installment_id = $1
+        ORDER BY id
+      `, [instRow.id]);
+
+      loadedInstallments.push({
+        installment: instRow.installment_number,
+        entries: entriesResult.rows.map(e => {
+          const amount = Number(e.amount || 0);
+          const paidAmount = Number(e.paid_amount || 0);
+          const outstanding = amount - paidAmount;
+
+          return {
+            id: e.id,
+            description: e.description,
+            due_date: e.due_date ? e.due_date.toISOString().split('T')[0] : null,
+            amount: amount,
+            paid_amount: paidAmount,
+            outstanding: outstanding,
+            status: e.status,
+            paid_date: e.paid_date ? e.paid_date.toISOString().split('T')[0] : null,
+            invoice_number: e.invoice_number,
+            invoice_type: e.invoice_type,
+            receipt_file_name: e.receipt_file_name,
+            receipt_file_url: e.receipt_file_url,
+            receipt_uploaded_at: e.receipt_uploaded_at ? e.receipt_uploaded_at.toISOString() : null
+          };
+        })
+      });
+    }
+
+    const scheduleRow = updatedSchedule.rows[0];
+    const fullSchedule = {
+      id: scheduleRow.id,
+      policy_id: scheduleRow.policy_id,
+      client_id: scheduleRow.client_id,
+      insurance_id: scheduleRow.insurance_id,
+      source_business_id: scheduleRow.source_business_id,
+      currency: scheduleRow.currency,
+      type_of_business: scheduleRow.type_of_business,
+      commission_gross: scheduleRow.commission_gross ? Number(scheduleRow.commission_gross) : null,
+      commission_to_source: scheduleRow.commission_to_source ? Number(scheduleRow.commission_to_source) : null,
+      internal_invoice_number: scheduleRow.internal_invoice_number,
+      external_invoice_number: scheduleRow.external_invoice_number,
+      effective_date: scheduleRow.effective_date,
+      installments: loadedInstallments,
+      created_at: scheduleRow.created_at,
+      updated_at: scheduleRow.updated_at
+    };
+
+    const enriched = computeSummary(fullSchedule);
 
     res.json({
       success: true,
