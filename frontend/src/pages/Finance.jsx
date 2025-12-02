@@ -1242,8 +1242,12 @@ function Finance() {
                             : '▼'
                           : ''}
                       </th>
+                      <th>Paid Amount</th>
+                      <th>Outstanding</th>
+                      <th>Invoice Number</th>
                       <th>Status</th>
                       <th>Paid Date</th>
+                      <th>Receipt</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1271,6 +1275,34 @@ function Finance() {
                             {formatMoney(
                               row.entry.amount,
                               row.currency
+                            )}
+                          </td>
+                          <td>
+                            <div className="text-success">
+                              {formatMoney(
+                                row.entry.paid_amount || 0,
+                                row.currency
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="text-danger">
+                              {formatMoney(
+                                row.entry.outstanding || 0,
+                                row.currency
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <small className="font-monospace">
+                              {row.entry.invoice_number || '-'}
+                            </small>
+                            {row.entry.invoice_type && (
+                              <div>
+                                <span className={`badge ${row.entry.invoice_type === 'DN' ? 'bg-warning' : 'bg-info'}`}>
+                                  {row.entry.invoice_type}
+                                </span>
+                              </div>
                             )}
                           </td>
                           <td>
@@ -1315,6 +1347,22 @@ function Finance() {
                                 )
                               }
                             />
+                          </td>
+                          <td>
+                            {row.entry.receipt_file_name ? (
+                              <div>
+                                <a
+                                  href={`http://localhost:5000${row.entry.receipt_file_url}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="btn btn-sm btn-outline-success mb-1"
+                                >
+                                  📄 View
+                                </a>
+                              </div>
+                            ) : (
+                              <small className="text-muted">No receipt</small>
+                            )}
                           </td>
                         </tr>
                       );
