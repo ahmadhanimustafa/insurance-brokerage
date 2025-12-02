@@ -68,8 +68,30 @@ async function generateQuotationNumber({ caseType, productCode, effectiveDate })
   return `QS/ICIB/${running}/${roman}/${nbRn}/${productCode}-${year}`;
 }
 
+async function generateInvoiceNumber({ createdDate }) {
+  const date = createdDate ? new Date(createdDate) : new Date();
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
+  const monthStr = String(month).padStart(2, '0');
+
+  // Get count of finance schedules for this year-month
+  const sql = `
+    SELECT COUNT(*)::int AS cnt
+    FROM finance_schedules
+    WHERE created_at IS NOT NULL
+      AND EXTRACT(YEAR FROM created_at) = $1
+      AND EXTRACT(MONTH FROM created_at) = $2
+  `;
+  const result = await db.query(sql, [year, month]);
+  const count = result.rows[0]?.cnt || 0;
+  const running = String(count + 1).padStart(4, '0');
+
+  return `INV/${year}/${monthStr}/${running}`;
+}
+
 module.exports = {
   generatePolicyNumber,
   generatePlacingNumber,
-  generateQuotationNumber
+  generateQuotationNumber,
+  generateInvoiceNumber
 };

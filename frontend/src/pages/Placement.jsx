@@ -195,6 +195,9 @@ function Placement() {
     policy_number: "",
     placing_slip_number: "",
     qs_number: "",
+    external_invoice_number: "",
+    internal_invoice_number: "",
+    create_finance_schedule: false,
   };
 
 
@@ -1020,12 +1023,26 @@ function Placement() {
     setSuccess("");
     try {
       const payload = { ...policyForm };
+      let savedPolicy = null;
+
       if (editingPolicy) {
-        await api.put(`/placement/policies/${editingPolicy.id}`, payload);
+        const response = await api.put(`/placement/policies/${editingPolicy.id}`, payload);
+        savedPolicy = response.data.data;
         setSuccess("Policy updated.");
       } else {
-        await api.post("/placement/policies", payload);
+        const response = await api.post("/placement/policies", payload);
+        savedPolicy = response.data.data;
         setSuccess("Policy created.");
+
+        // If finance schedule was created, update the form with invoice numbers
+        if (savedPolicy.finance_schedule) {
+          setPolicyForm(prev => ({
+            ...prev,
+            internal_invoice_number: savedPolicy.finance_schedule.internal_invoice_number,
+            external_invoice_number: savedPolicy.finance_schedule.external_invoice_number || prev.external_invoice_number,
+          }));
+          setSuccess(`Policy created with invoice number: ${savedPolicy.finance_schedule.internal_invoice_number}`);
+        }
       }
 
       const res = await api.get("/placement/policies");
@@ -1584,7 +1601,7 @@ function Placement() {
                           <div className="btn-group btn-group-sm">
                             <button
                               className="btn btn-outline-secondary"
-                               onClick={() => {
+                               onClick={async () => {
                                 setEditingPolicy(p);
                                 setPolicyForm({
                                   ...emptyPolicyForm,
@@ -1593,6 +1610,20 @@ function Placement() {
                                 setPolicyDocuments([]);
                                 setShowPolicyModal(true);
                                 loadPolicyDocuments(p.id);
+
+                                // Load finance schedule if exists
+                                try {
+                                  const financeRes = await api.get(`/placement/policies/${p.id}/finance`);
+                                  if (financeRes.data.data) {
+                                    setPolicyForm(prev => ({
+                                      ...prev,
+                                      internal_invoice_number: financeRes.data.data.internal_invoice_number || '',
+                                      external_invoice_number: financeRes.data.data.external_invoice_number || '',
+                                    }));
+                                  }
+                                } catch (err) {
+                                  console.error('Error loading finance schedule:', err);
+                                }
                               }}
                             >
                               Edit
@@ -2848,6 +2879,68 @@ function Placement() {
                     />
                   </div>
                   </div>
+
+                  {/* Invoice Numbers Section */}
+                  <div className="row">
+                    <div className="col-md-4 mb-3">
+                      <label className="form-label">External Invoice Number</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="Reference from other company"
+                        value={policyForm.external_invoice_number || ""}
+                        onChange={(e) =>
+                          setPolicyForm({
+                            ...policyForm,
+                            external_invoice_number: e.target.value,
+                          })
+                        }
+                      />
+                      <small className="text-muted">Invoice reference from external party</small>
+                    </div>
+
+                    {policyForm.internal_invoice_number && (
+                      <div className="col-md-4 mb-3">
+                        <label className="form-label">Internal Invoice Number</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={policyForm.internal_invoice_number || ""}
+                          readOnly
+                          style={{ backgroundColor: '#e9ecef' }}
+                        />
+                        <small className="text-muted">Auto-generated</small>
+                      </div>
+                    )}
+
+                    <div className="col-md-4 mb-3 d-flex align-items-center">
+                      <div className="form-check">
+                        <input
+                          type="checkbox"
+                          className="form-check-input"
+                          id="createFinanceSchedule"
+                          checked={policyForm.create_finance_schedule || false}
+                          onChange={(e) =>
+                            setPolicyForm({
+                              ...policyForm,
+                              create_finance_schedule: e.target.checked,
+                            })
+                          }
+                          disabled={!!editingPolicy?.id}
+                        />
+                        <label className="form-check-label" htmlFor="createFinanceSchedule">
+                          Create Finance Schedule
+                        </label>
+                        <br/>
+                        <small className="text-muted">
+                          {editingPolicy?.id
+                            ? "Finance schedule created on save"
+                            : "Check to create finance record"}
+                        </small>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="mb-3">
                     <label className="form-label">Remarks</label>
                     <ReactQuill

@@ -8,6 +8,7 @@ const db = require('../utils/db'); // adjust if your path/name is different
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { generateInvoiceNumber } = require('../utils/numbering');
 
 // helper: uniform ID compare
 const sameId = (a, b) => String(a) === String(b);
@@ -65,6 +66,54 @@ const getUserId = (req) => {
   const parsed = parseInt(fromHeader, 10);
   return Number.isNaN(parsed) ? null : parsed;
 };
+
+// Helper to create finance schedule for a policy
+const createFinanceSchedule = async (policyId, policyData, externalInvoiceNumber = null) => {
+  try {
+    // Generate internal invoice number
+    const internalInvoiceNumber = await generateInvoiceNumber({ createdDate: new Date() });
+
+    // Create finance schedule
+    const scheduleSql = `
+      INSERT INTO finance_schedules (
+        policy_id,
+        client_id,
+        insurance_id,
+        source_business_id,
+        currency,
+        type_of_business,
+        commission_gross,
+        commission_to_source,
+        internal_invoice_number,
+        external_invoice_number,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+      RETURNING id, internal_invoice_number, external_invoice_number
+    `;
+
+    const scheduleParams = [
+      policyId,
+      policyData.client_id || null,
+      policyData.insurance_id || null,
+      policyData.source_business_id || null,
+      policyData.currency || 'IDR',
+      policyData.type_of_business || 'Direct',
+      policyData.commission_gross || 0,
+      policyData.commission_to_source || 0,
+      internalInvoiceNumber,
+      externalInvoiceNumber,
+    ];
+
+    const { rows } = await db.query(scheduleSql, scheduleParams);
+    return rows[0];
+  } catch (err) {
+    console.error('Error creating finance schedule:', err);
+    throw err;
+  }
+};
+
 // ------------------------------
 // CLIENTS
 // ------------------------------
@@ -992,6 +1041,8 @@ router.post('/policies', async (req, res) => {
       commission_net_percent,
       remarks,
       reference_policy_id,
+      external_invoice_number,
+      create_finance_schedule,
     } = body;
 
     if (!client_id || !class_of_business_id || !product_id) {
@@ -1117,6 +1168,29 @@ router.post('/policies', async (req, res) => {
     const { rows } = await db.query(sql, params);
     const r = rows[0];
 
+    // Create finance schedule if requested
+    let financeSchedule = null;
+    if (create_finance_schedule === true || create_finance_schedule === 'true') {
+      try {
+        financeSchedule = await createFinanceSchedule(
+          r.id,
+          {
+            client_id: r.client_id,
+            insurance_id: r.insurance_id,
+            source_business_id: r.source_business_id,
+            currency: r.currency,
+            type_of_business: r.type_of_business,
+            commission_gross: r.commission_gross,
+            commission_to_source: r.commission_to_source,
+          },
+          external_invoice_number
+        );
+      } catch (err) {
+        console.error('Error creating finance schedule:', err);
+        // Don't fail the policy creation if finance schedule fails
+      }
+    }
+
     const policy = {
       id: r.id,
       transaction_number: r.transaction_number || '',
@@ -1154,7 +1228,7 @@ router.post('/policies', async (req, res) => {
       created_at: r.created_at,
       updated_at: r.updated_at,
       reference_policy_id: r.reference_policy_id,
-
+      finance_schedule: financeSchedule,
     };
 
     return res.json({
@@ -1371,6 +1445,57 @@ router.put('/policies/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating policy:', err);
+    return res.status(500).json({
+      success: false,
+      error: { code: 'SERVER_ERROR', message: err.message },
+    });
+  }
+});
+
+// GET /api/placement/policies/:id/finance
+router.get('/policies/:id/finance', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid policy id' },
+      });
+    }
+
+    const { rows } = await db.query(
+      `
+      SELECT
+        id,
+        policy_id,
+        internal_invoice_number,
+        external_invoice_number,
+        currency,
+        type_of_business,
+        commission_gross,
+        commission_to_source,
+        created_at,
+        updated_at
+      FROM finance_schedules
+      WHERE policy_id = $1
+      `,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'No finance schedule found for this policy',
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: rows[0],
+    });
+  } catch (err) {
+    console.error('Error loading finance schedule:', err);
     return res.status(500).json({
       success: false,
       error: { code: 'SERVER_ERROR', message: err.message },
