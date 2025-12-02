@@ -55,6 +55,7 @@ function Finance() {
   const [paymentCount, setPaymentCount] = useState(1);
   const [installmentsDraft, setInstallmentsDraft] = useState([]); // [{ installment, entries: [] }]
   const [externalInvoiceNumber, setExternalInvoiceNumber] = useState(''); // External invoice reference
+  const [internalReferenceNumber, setInternalReferenceNumber] = useState(''); // Internal reference number
 
   // Payment update modal state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -429,6 +430,7 @@ function Finance() {
     setCurrentSchedule(null);
     setInstallmentsDraft([]);
     setExternalInvoiceNumber('');
+    setInternalReferenceNumber('');
     setError('');
   };
 
@@ -605,6 +607,7 @@ function Finance() {
           commission_to_source: currentPolicy.commission_to_source,
           effective_date: currentPolicy.effective_date, // Required for invoice generation
           external_invoice_number: externalInvoiceNumber || null, // Optional reference
+          internal_reference_number: internalReferenceNumber || null, // Optional internal reference
           installments: installmentsDraft
         };
 
@@ -1607,21 +1610,51 @@ function Finance() {
                 <form onSubmit={handleSaveModal}>
                   {modalMode === 'create' && currentPolicy && (
                     <>
-                      <div className="mb-3">
-                        <label className="form-label">
-                          External Invoice Number (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          className="form-control"
-                          placeholder="Reference number from other company"
-                          value={externalInvoiceNumber}
-                          onChange={(e) => setExternalInvoiceNumber(e.target.value)}
-                        />
-                        <small className="text-muted">
-                          Enter invoice reference from external party if available
-                        </small>
-                      </div>
+                      <fieldset className="border p-3 mb-3" style={{ backgroundColor: '#fff3cd', borderColor: '#ffc107', borderWidth: '2px' }}>
+                        <legend className="w-auto px-2" style={{ color: '#856404', fontWeight: 'bold' }}>
+                          📋 Reference Numbers
+                        </legend>
+                        <div className="row">
+                          <div className="col-md-6 mb-3">
+                            <label className="form-label fw-bold text-primary">
+                              Internal Reference Number
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control form-control-lg"
+                              style={{ borderColor: '#0d6efd', borderWidth: '2px' }}
+                              placeholder="Internal reference number"
+                              value={internalReferenceNumber}
+                              onChange={(e) => setInternalReferenceNumber(e.target.value)}
+                            />
+                            <small className="text-muted">
+                              📝 Your company's internal reference number
+                            </small>
+                          </div>
+                          <div className="col-md-6 mb-3">
+                            <label className="form-label fw-bold text-success">
+                              External Invoice Number
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control form-control-lg"
+                              style={{ borderColor: '#198754', borderWidth: '2px' }}
+                              placeholder="External reference number"
+                              value={externalInvoiceNumber}
+                              onChange={(e) => setExternalInvoiceNumber(e.target.value)}
+                            />
+                            <small className="text-muted">
+                              📨 Reference from insurance company or external party
+                            </small>
+                          </div>
+                        </div>
+                        <div className="alert alert-info mb-0" style={{ backgroundColor: '#cfe2ff', borderColor: '#b6d4fe' }}>
+                          <small>
+                            <strong>Note:</strong> Both fields are optional. Internal reference is for your company's tracking.
+                            External reference is for references from insurance companies or other partners.
+                          </small>
+                        </div>
+                      </fieldset>
                       <fieldset className="border p-3 mb-3">
                         <legend className="w-auto px-2">
                           Payment Type & Generate Installments
