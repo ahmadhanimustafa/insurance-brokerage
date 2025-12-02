@@ -278,6 +278,7 @@ router.get('/schedules', async (req, res) => {
         id, policy_id, client_id, insurance_id, source_business_id,
         currency, type_of_business, commission_gross, commission_to_source,
         internal_invoice_number, external_invoice_number, internal_reference_number,
+        stamp_duty,
         created_at, updated_at
       FROM finance_schedules
       ORDER BY id DESC
@@ -345,6 +346,7 @@ router.get('/schedules', async (req, res) => {
         internal_invoice_number: scheduleRow.internal_invoice_number,
         external_invoice_number: scheduleRow.external_invoice_number,
         internal_reference_number: scheduleRow.internal_reference_number,
+        stamp_duty: scheduleRow.stamp_duty ? Number(scheduleRow.stamp_duty) : 0,
         installments,
         created_at: scheduleRow.created_at,
         updated_at: scheduleRow.updated_at
@@ -382,6 +384,7 @@ router.post('/schedules', async (req, res) => {
       commission_to_source,
       external_invoice_number,
       internal_reference_number,
+      stamp_duty,
       effective_date // Policy effective date for invoice generation
     } = req.body;
 
@@ -434,14 +437,15 @@ router.post('/schedules', async (req, res) => {
         internal_invoice_number,
         external_invoice_number,
         internal_reference_number,
+        stamp_duty,
         effective_date,
         created_at,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())
       RETURNING id, policy_id, client_id, insurance_id, source_business_id,
                 currency, type_of_business, commission_gross, commission_to_source,
-                internal_invoice_number, external_invoice_number, internal_reference_number, effective_date,
+                internal_invoice_number, external_invoice_number, internal_reference_number, stamp_duty, effective_date,
                 created_at, updated_at
     `;
 
@@ -457,6 +461,7 @@ router.post('/schedules', async (req, res) => {
       null, // internal_invoice_number - will be set per entry
       external_invoice_number || null,
       internal_reference_number || null,
+      stamp_duty != null ? Number(stamp_duty) : 0,
       effective_date
     ];
 
@@ -659,7 +664,7 @@ router.put('/schedules/:id', async (req, res) => {
       SELECT
         id, policy_id, client_id, insurance_id, source_business_id,
         currency, type_of_business, commission_gross, commission_to_source,
-        internal_invoice_number, external_invoice_number, internal_reference_number, effective_date,
+        internal_invoice_number, external_invoice_number, internal_reference_number, stamp_duty, effective_date,
         created_at, updated_at
       FROM finance_schedules
       WHERE id = $1
@@ -724,6 +729,7 @@ router.put('/schedules/:id', async (req, res) => {
       internal_invoice_number: scheduleRow.internal_invoice_number,
       external_invoice_number: scheduleRow.external_invoice_number,
       internal_reference_number: scheduleRow.internal_reference_number,
+      stamp_duty: scheduleRow.stamp_duty ? Number(scheduleRow.stamp_duty) : 0,
       effective_date: scheduleRow.effective_date,
       installments: loadedInstallments,
       created_at: scheduleRow.created_at,

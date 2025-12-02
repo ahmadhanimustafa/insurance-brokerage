@@ -56,6 +56,7 @@ function Finance() {
   const [installmentsDraft, setInstallmentsDraft] = useState([]); // [{ installment, entries: [] }]
   const [externalInvoiceNumber, setExternalInvoiceNumber] = useState(''); // External invoice reference
   const [internalReferenceNumber, setInternalReferenceNumber] = useState(''); // Internal reference number
+  const [stampDuty, setStampDuty] = useState(0); // Stamp duty amount
 
   // Payment update modal state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -285,6 +286,7 @@ function Finance() {
         sourceName: getSourceName(s.source_business_id),
         summary,
         currency,
+        stampDuty: s.stamp_duty || 0,
         installment: inst.installment,
         installmentIndex: instIdx,
         entryIndex: idx,
@@ -431,6 +433,7 @@ function Finance() {
     setInstallmentsDraft([]);
     setExternalInvoiceNumber('');
     setInternalReferenceNumber('');
+    setStampDuty(0);
     setError('');
   };
 
@@ -492,6 +495,7 @@ function Finance() {
     } else {
       // DIRECT business: premium + commission
       const perPremium = totalPremium / n;
+      const duty = Number(stampDuty || 0);
       let acc = 0;
       const rows = [];
       for (let i = 0; i < n; i++) {
@@ -502,8 +506,14 @@ function Finance() {
         const commissionIn = Math.round(base * (grossPct / 100) * 100) / 100;
         const commissionOut =
           Math.round(base * (sourcePct / 100) * 100) / 100;
-        const premiumToInsurer =
+        let premiumToInsurer =
           Math.round((base - commissionIn) * 100) / 100;
+
+        // Add stamp duty to first installment
+        const premiumFromClient = i === 0 ? base + duty : base;
+        if (i === 0) {
+          premiumToInsurer += duty;
+        }
 
         rows.push({
           installment: i + 1,
@@ -511,7 +521,7 @@ function Finance() {
             {
               description: 'Premium (From Client)',
               due_date: effDate,
-              amount: base,
+              amount: premiumFromClient,
               status: 'NOT_DUE',
               paid_date: ''
             },
@@ -608,6 +618,7 @@ function Finance() {
           effective_date: currentPolicy.effective_date, // Required for invoice generation
           external_invoice_number: externalInvoiceNumber || null, // Optional reference
           internal_reference_number: internalReferenceNumber || null, // Optional internal reference
+          stamp_duty: Number(stampDuty || 0),
           installments: installmentsDraft
         };
 
@@ -1403,7 +1414,19 @@ function Finance() {
                             </small>
                           </td>
                           <td>{row.installment}</td>
-                          <td>{row.entry.description}</td>
+                          <td>
+                            {row.entry.description}
+                            {row.stampDuty > 0 && row.installment === 1 && (
+                              (row.entry.description === 'Premium (From Client)' ||
+                               row.entry.description === 'Premium to Insurer') && (
+                                <div className="mt-1">
+                                  <span className="badge bg-info" title={`Includes stamp duty: ${formatMoney(row.stampDuty, row.currency)}`}>
+                                    💰 +Stamp Duty
+                                  </span>
+                                </div>
+                              )
+                            )}
+                          </td>
                           <td>{row.entry.due_date || '-'}</td>
                           <td>{aging != null ? aging : '-'}</td>
                           <td>
@@ -1655,6 +1678,42 @@ function Finance() {
                           </small>
                         </div>
                       </fieldset>
+
+                      <fieldset className="border p-3 mb-3" style={{ backgroundColor: '#d1ecf1', borderColor: '#17a2b8', borderWidth: '2px' }}>
+                        <legend className="w-auto px-2" style={{ color: '#0c5460', fontWeight: 'bold' }}>
+                          💰 Stamp Duty
+                        </legend>
+                        <div className="row">
+                          <div className="col-md-6 mb-3">
+                            <label className="form-label fw-bold text-info">
+                              Stamp Duty Amount
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="form-control form-control-lg"
+                              style={{ borderColor: '#17a2b8', borderWidth: '2px' }}
+                              placeholder="0.00"
+                              value={stampDuty}
+                              onChange={(e) => setStampDuty(e.target.value)}
+                            />
+                            <small className="text-muted">
+                              💵 Government stamp duty fee (added to 1st installment)
+                            </small>
+                          </div>
+                          <div className="col-md-6 mb-3 d-flex align-items-center">
+                            <div className="alert alert-warning mb-0" style={{ width: '100%' }}>
+                              <small>
+                                <strong>⚠️ Important:</strong> Stamp duty will be added to:<br/>
+                                • Premium (From Client) - 1st installment<br/>
+                                • Premium to Insurer - 1st installment
+                              </small>
+                            </div>
+                          </div>
+                        </div>
+                      </fieldset>
+
                       <fieldset className="border p-3 mb-3">
                         <legend className="w-auto px-2">
                           Payment Type & Generate Installments
@@ -1780,46 +1839,58 @@ function Finance() {
                                         />
                                       </td>
                                       <td>
-                                        <select
-                                          className="form-select form-select-sm"
-                                          value={
-                                            entry.status || 'NOT_DUE'
-                                          }
-                                          onChange={(e) =>
-                                            updateEntryField(
-                                              iIdx,
-                                              eIdx,
-                                              'status',
-                                              e.target.value
-                                            )
-                                          }
-                                        >
-                                          {ENTRY_STATUS_OPTIONS.map(
-                                            (opt) => (
-                                              <option
-                                                key={opt.value}
-                                                value={opt.value}
-                                              >
-                                                {opt.label}
-                                              </option>
-                                            )
-                                          )}
-                                        </select>
+                                        {modalMode === 'edit' ? (
+                                          <span className="badge bg-secondary">
+                                            {formatStatusLabel(entry.status || 'NOT_DUE')}
+                                          </span>
+                                        ) : (
+                                          <select
+                                            className="form-select form-select-sm"
+                                            value={
+                                              entry.status || 'NOT_DUE'
+                                            }
+                                            onChange={(e) =>
+                                              updateEntryField(
+                                                iIdx,
+                                                eIdx,
+                                                'status',
+                                                e.target.value
+                                              )
+                                            }
+                                          >
+                                            {ENTRY_STATUS_OPTIONS.map(
+                                              (opt) => (
+                                                <option
+                                                  key={opt.value}
+                                                  value={opt.value}
+                                                >
+                                                  {opt.label}
+                                                </option>
+                                              )
+                                            )}
+                                          </select>
+                                        )}
                                       </td>
                                       <td>
-                                        <input
-                                          type="date"
-                                          className="form-control form-control-sm"
-                                          value={entry.paid_date || ''}
-                                          onChange={(e) =>
-                                            updateEntryField(
-                                              iIdx,
-                                              eIdx,
-                                              'paid_date',
-                                              e.target.value
-                                            )
-                                          }
-                                        />
+                                        {modalMode === 'edit' ? (
+                                          <span className="text-muted">
+                                            {entry.paid_date || '-'}
+                                          </span>
+                                        ) : (
+                                          <input
+                                            type="date"
+                                            className="form-control form-control-sm"
+                                            value={entry.paid_date || ''}
+                                            onChange={(e) =>
+                                              updateEntryField(
+                                                iIdx,
+                                                eIdx,
+                                                'paid_date',
+                                                e.target.value
+                                              )
+                                            }
+                                          />
+                                        )}
                                       </td>
                                     </tr>
                                   )
