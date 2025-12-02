@@ -68,17 +68,21 @@ async function generateQuotationNumber({ caseType, productCode, effectiveDate })
   return `QS/ICIB/${running}/${roman}/${nbRn}/${productCode}-${year}`;
 }
 
-async function generateInvoiceNumber({ createdDate }) {
-  const date = createdDate ? new Date(createdDate) : new Date();
+async function generateInvoiceNumber({ effectiveDate, installmentNumber, invoiceType }) {
+  // Format: {Running}/{Installment}/{DN/CN}/{MM}/{YY}
+  // effectiveDate is the policy effective date
+  const date = effectiveDate ? new Date(effectiveDate) : new Date();
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth() + 1;
   const monthStr = String(month).padStart(2, '0');
+  const yearStr = String(year).slice(-2); // Last 2 digits
 
-  // Get count of finance schedules for this year-month
+  // Get count of finance entries for this year-month to generate running number
   const sql = `
     SELECT COUNT(*)::int AS cnt
-    FROM finance_schedules
-    WHERE created_at IS NOT NULL
+    FROM finance_entries
+    WHERE invoice_number IS NOT NULL
+      AND created_at IS NOT NULL
       AND EXTRACT(YEAR FROM created_at) = $1
       AND EXTRACT(MONTH FROM created_at) = $2
   `;
@@ -86,12 +90,33 @@ async function generateInvoiceNumber({ createdDate }) {
   const count = result.rows[0]?.cnt || 0;
   const running = String(count + 1).padStart(4, '0');
 
-  return `INV/${year}/${monthStr}/${running}`;
+  // Format: RUNNING/INSTALLMENT/TYPE/MM/YY
+  return `${running}/${installmentNumber}/${invoiceType}/${monthStr}/${yearStr}`;
+}
+
+// Helper function to determine invoice type based on description
+function getInvoiceType(description) {
+  // DN (Debit Note): Pay premium to insurance, Pay commission
+  // CN (Credit Note): Receive premium from client, Collect commission from insurance
+
+  switch (description) {
+    case 'Premium (From Client)':
+      return 'CN'; // Receiving from client
+    case 'Premium to Insurer':
+      return 'DN'; // Paying to insurer
+    case 'Commission In':
+      return 'CN'; // Collecting commission
+    case 'Commission to Source':
+      return 'DN'; // Paying commission
+    default:
+      return 'DN';
+  }
 }
 
 module.exports = {
   generatePolicyNumber,
   generatePlacingNumber,
   generateQuotationNumber,
-  generateInvoiceNumber
+  generateInvoiceNumber,
+  getInvoiceType
 };

@@ -6,7 +6,35 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../utils/db');
-const { generateInvoiceNumber } = require('../utils/numbering');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { generateInvoiceNumber, getInvoiceType } = require('../utils/numbering');
+
+// ===============================
+// File Upload Setup
+// ===============================
+
+const uploadDir =
+  process.env.FILE_UPLOAD_PATH || path.join(__dirname, '..', '..', 'uploads', 'receipts');
+
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const entryId = req.params.entryId || 'unknown';
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname || '');
+    cb(null, `receipt_${entryId}_${unique}${ext}`);
+  },
+});
+
+const upload = multer({ storage });
 
 // ===============================
 // In-memory storage
@@ -270,7 +298,9 @@ router.get('/schedules', async (req, res) => {
 
       for (const instRow of installmentsResult.rows) {
         const entriesResult = await db.query(`
-          SELECT id, description, due_date, amount, status, paid_date
+          SELECT id, description, due_date, amount, status, paid_date,
+                 paid_amount, invoice_number, invoice_type,
+                 receipt_file_name, receipt_file_url, receipt_uploaded_at
           FROM finance_entries
           WHERE installment_id = $1
           ORDER BY id
@@ -278,13 +308,27 @@ router.get('/schedules', async (req, res) => {
 
         installments.push({
           installment: instRow.installment_number,
-          entries: entriesResult.rows.map(e => ({
-            description: e.description,
-            due_date: e.due_date ? e.due_date.toISOString().split('T')[0] : null,
-            amount: Number(e.amount || 0),
-            status: e.status,
-            paid_date: e.paid_date ? e.paid_date.toISOString().split('T')[0] : null
-          }))
+          entries: entriesResult.rows.map(e => {
+            const amount = Number(e.amount || 0);
+            const paidAmount = Number(e.paid_amount || 0);
+            const outstanding = amount - paidAmount;
+
+            return {
+              id: e.id,
+              description: e.description,
+              due_date: e.due_date ? e.due_date.toISOString().split('T')[0] : null,
+              amount: amount,
+              paid_amount: paidAmount,
+              outstanding: outstanding,
+              status: e.status,
+              paid_date: e.paid_date ? e.paid_date.toISOString().split('T')[0] : null,
+              invoice_number: e.invoice_number,
+              invoice_type: e.invoice_type,
+              receipt_file_name: e.receipt_file_name,
+              receipt_file_url: e.receipt_file_url,
+              receipt_uploaded_at: e.receipt_uploaded_at ? e.receipt_uploaded_at.toISOString() : null
+            };
+          })
         });
       }
 
@@ -335,13 +379,21 @@ router.post('/schedules', async (req, res) => {
       type_of_business, // "Direct" / "Non Direct" from frontend
       commission_gross,
       commission_to_source,
-      external_invoice_number
+      external_invoice_number,
+      effective_date // Policy effective date for invoice generation
     } = req.body;
 
     if (!policy_id) {
       return res.status(400).json({
         success: false,
         error: { code: 'VALIDATION', message: 'policy_id is required' }
+      });
+    }
+
+    if (!effective_date) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'effective_date is required for invoice generation' }
       });
     }
 
@@ -359,9 +411,6 @@ router.post('/schedules', async (req, res) => {
         }
       });
     }
-
-    // Generate internal invoice number
-    const internalInvoiceNumber = await generateInvoiceNumber({ createdDate: new Date() });
 
     const normalizedType = normalizeBusinessType(type_of_business);
     const installments = buildInstallmentsFromBody(
@@ -382,13 +431,15 @@ router.post('/schedules', async (req, res) => {
         commission_to_source,
         internal_invoice_number,
         external_invoice_number,
+        effective_date,
         created_at,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
       RETURNING id, policy_id, client_id, insurance_id, source_business_id,
                 currency, type_of_business, commission_gross, commission_to_source,
-                internal_invoice_number, external_invoice_number, created_at, updated_at
+                internal_invoice_number, external_invoice_number, effective_date,
+                created_at, updated_at
     `;
 
     const scheduleParams = [
@@ -400,14 +451,17 @@ router.post('/schedules', async (req, res) => {
       normalizedType,
       commission_gross != null ? Number(commission_gross) : null,
       commission_to_source != null ? Number(commission_to_source) : null,
-      internalInvoiceNumber,
-      external_invoice_number || null
+      null, // internal_invoice_number - will be set per entry
+      external_invoice_number || null,
+      effective_date
     ];
 
     const { rows } = await db.query(scheduleSql, scheduleParams);
     const schedule = rows[0];
 
-    // Create installments and entries in database
+    // Create installments and entries in database with invoice numbers
+    const generatedInvoices = [];
+
     for (const inst of installments) {
       const instSql = `
         INSERT INTO finance_installments (schedule_id, installment_number)
@@ -418,11 +472,26 @@ router.post('/schedules', async (req, res) => {
       const installmentId = instResult.rows[0].id;
 
       for (const entry of inst.entries) {
+        // Generate invoice number for each entry
+        const invoiceType = getInvoiceType(entry.description);
+        const invoiceNumber = await generateInvoiceNumber({
+          effectiveDate: effective_date,
+          installmentNumber: inst.installment,
+          invoiceType: invoiceType
+        });
+
+        generatedInvoices.push({
+          description: entry.description,
+          invoice_number: invoiceNumber,
+          invoice_type: invoiceType
+        });
+
         const entrySql = `
           INSERT INTO finance_entries (
-            installment_id, description, due_date, amount, status, paid_date
+            installment_id, description, due_date, amount, status, paid_date,
+            paid_amount, invoice_number, invoice_type
           )
-          VALUES ($1, $2, $3, $4, $5, $6)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `;
         await db.query(entrySql, [
           installmentId,
@@ -430,20 +499,24 @@ router.post('/schedules', async (req, res) => {
           entry.due_date,
           entry.amount,
           entry.status,
-          entry.paid_date
+          entry.paid_date,
+          0, // paid_amount starts at 0
+          invoiceNumber,
+          invoiceType
         ]);
       }
     }
 
     const enriched = {
       ...schedule,
-      installments
+      installments,
+      generated_invoices: generatedInvoices
     };
 
     res.status(201).json({
       success: true,
       data: enriched,
-      message: `Finance schedule created with invoice number: ${internalInvoiceNumber}`
+      message: `Finance schedule created with ${generatedInvoices.length} invoice(s) generated`
     });
   } catch (err) {
     console.error('Error creating finance schedule:', err);
@@ -513,6 +586,227 @@ router.put('/schedules/:id', (req, res) => {
       error: {
         code: 'SERVER_ERROR',
         message: err.message || 'Failed to update finance schedule'
+      }
+    });
+  }
+});
+
+// PUT update payment for an entry (partial payment)
+router.put('/entries/:id/payment', async (req, res) => {
+  try {
+    const entryId = parseInt(req.params.id, 10);
+    const { paid_amount, paid_date, status } = req.body;
+
+    if (!entryId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Entry ID is required' }
+      });
+    }
+
+    // Get current entry data
+    const currentEntry = await db.query(
+      'SELECT id, amount, paid_amount FROM finance_entries WHERE id = $1',
+      [entryId]
+    );
+
+    if (currentEntry.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Finance entry not found' }
+      });
+    }
+
+    const entry = currentEntry.rows[0];
+    const totalAmount = Number(entry.amount || 0);
+    const newPaidAmount = Number(paid_amount || 0);
+
+    // Validate paid amount
+    if (newPaidAmount > totalAmount) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Paid amount cannot exceed total amount' }
+      });
+    }
+
+    // Determine status based on paid amount
+    let finalStatus = status;
+    if (!status) {
+      if (newPaidAmount === 0) {
+        finalStatus = 'NOT_DUE';
+      } else if (newPaidAmount < totalAmount) {
+        finalStatus = 'PARTIAL_PAID';
+      } else if (newPaidAmount === totalAmount) {
+        finalStatus = 'PAID';
+      }
+    }
+
+    const updateSql = `
+      UPDATE finance_entries
+      SET paid_amount = $1,
+          paid_date = $2,
+          status = $3,
+          updated_at = now()
+      WHERE id = $4
+      RETURNING id, description, amount, paid_amount, status, paid_date,
+                invoice_number, invoice_type
+    `;
+
+    const { rows } = await db.query(updateSql, [
+      newPaidAmount,
+      paid_date || null,
+      finalStatus,
+      entryId
+    ]);
+
+    const updated = rows[0];
+    const outstanding = Number(updated.amount) - Number(updated.paid_amount);
+
+    res.json({
+      success: true,
+      data: {
+        ...updated,
+        amount: Number(updated.amount),
+        paid_amount: Number(updated.paid_amount),
+        outstanding: outstanding
+      },
+      message: 'Payment updated successfully'
+    });
+  } catch (err) {
+    console.error('Error updating payment:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: err.message || 'Failed to update payment'
+      }
+    });
+  }
+});
+
+// POST upload receipt for an entry
+router.post('/entries/:id/receipt', upload.single('receipt'), async (req, res) => {
+  try {
+    const entryId = parseInt(req.params.id, 10);
+
+    if (!entryId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Entry ID is required' }
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Receipt file is required' }
+      });
+    }
+
+    // Check if entry exists
+    const entryCheck = await db.query(
+      'SELECT id FROM finance_entries WHERE id = $1',
+      [entryId]
+    );
+
+    if (entryCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Finance entry not found' }
+      });
+    }
+
+    const file = req.file;
+    const updateSql = `
+      UPDATE finance_entries
+      SET receipt_file_name = $1,
+          receipt_file_url = $2,
+          receipt_uploaded_at = now()
+      WHERE id = $3
+      RETURNING id, description, invoice_number, receipt_file_name,
+                receipt_file_url, receipt_uploaded_at
+    `;
+
+    const { rows } = await db.query(updateSql, [
+      file.filename,
+      `/uploads/receipts/${file.filename}`,
+      entryId
+    ]);
+
+    res.json({
+      success: true,
+      data: rows[0],
+      message: 'Receipt uploaded successfully'
+    });
+  } catch (err) {
+    console.error('Error uploading receipt:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: err.message || 'Failed to upload receipt'
+      }
+    });
+  }
+});
+
+// DELETE receipt for an entry
+router.delete('/entries/:id/receipt', async (req, res) => {
+  try {
+    const entryId = parseInt(req.params.id, 10);
+
+    if (!entryId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION', message: 'Entry ID is required' }
+      });
+    }
+
+    // Get current receipt file
+    const entryResult = await db.query(
+      'SELECT receipt_file_name FROM finance_entries WHERE id = $1',
+      [entryId]
+    );
+
+    if (entryResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Finance entry not found' }
+      });
+    }
+
+    const fileName = entryResult.rows[0].receipt_file_name;
+
+    // Delete file from disk if exists
+    if (fileName) {
+      const filePath = path.join(uploadDir, fileName);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+
+    // Clear receipt fields in database
+    const updateSql = `
+      UPDATE finance_entries
+      SET receipt_file_name = NULL,
+          receipt_file_url = NULL,
+          receipt_uploaded_at = NULL
+      WHERE id = $1
+    `;
+
+    await db.query(updateSql, [entryId]);
+
+    res.json({
+      success: true,
+      message: 'Receipt deleted successfully'
+    });
+  } catch (err) {
+    console.error('Error deleting receipt:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: err.message || 'Failed to delete receipt'
       }
     });
   }
