@@ -1,10 +1,12 @@
 // backend/src/routes/finance.js
-// Finance module - in-memory schedules with installment-level entries
+// Finance module - Database-backed schedules with installment-level entries
 // Status codes: NOT_DUE, DUE, PARTIAL_PAID, PAID
 // Descriptions: Premium (From Client), Premium to Insurer, Commission In, Commission to Source
 
 const express = require('express');
 const router = express.Router();
+const db = require('../utils/db');
+const { generateInvoiceNumber } = require('../utils/numbering');
 
 // ===============================
 // In-memory storage
@@ -240,16 +242,89 @@ function computeSummary(schedule) {
 // ===============================
 
 // GET all schedules (with summary)
-router.get('/schedules', (req, res) => {
-  const enriched = schedules.map((s) => computeSummary(s));
-  res.json({
-    success: true,
-    data: enriched
-  });
+router.get('/schedules', async (req, res) => {
+  try {
+    // Get all schedules from database
+    const schedulesResult = await db.query(`
+      SELECT
+        id, policy_id, client_id, insurance_id, source_business_id,
+        currency, type_of_business, commission_gross, commission_to_source,
+        internal_invoice_number, external_invoice_number,
+        created_at, updated_at
+      FROM finance_schedules
+      ORDER BY id DESC
+    `);
+
+    const schedules = [];
+
+    // For each schedule, load its installments and entries
+    for (const scheduleRow of schedulesResult.rows) {
+      const installmentsResult = await db.query(`
+        SELECT id, installment_number
+        FROM finance_installments
+        WHERE schedule_id = $1
+        ORDER BY installment_number
+      `, [scheduleRow.id]);
+
+      const installments = [];
+
+      for (const instRow of installmentsResult.rows) {
+        const entriesResult = await db.query(`
+          SELECT id, description, due_date, amount, status, paid_date
+          FROM finance_entries
+          WHERE installment_id = $1
+          ORDER BY id
+        `, [instRow.id]);
+
+        installments.push({
+          installment: instRow.installment_number,
+          entries: entriesResult.rows.map(e => ({
+            description: e.description,
+            due_date: e.due_date ? e.due_date.toISOString().split('T')[0] : null,
+            amount: Number(e.amount || 0),
+            status: e.status,
+            paid_date: e.paid_date ? e.paid_date.toISOString().split('T')[0] : null
+          }))
+        });
+      }
+
+      schedules.push({
+        id: scheduleRow.id,
+        policy_id: scheduleRow.policy_id,
+        client_id: scheduleRow.client_id,
+        insurance_id: scheduleRow.insurance_id,
+        source_business_id: scheduleRow.source_business_id,
+        currency: scheduleRow.currency,
+        type_of_business: scheduleRow.type_of_business,
+        commission_gross: scheduleRow.commission_gross ? Number(scheduleRow.commission_gross) : null,
+        commission_to_source: scheduleRow.commission_to_source ? Number(scheduleRow.commission_to_source) : null,
+        internal_invoice_number: scheduleRow.internal_invoice_number,
+        external_invoice_number: scheduleRow.external_invoice_number,
+        installments,
+        created_at: scheduleRow.created_at,
+        updated_at: scheduleRow.updated_at
+      });
+    }
+
+    const enriched = schedules.map((s) => computeSummary(s));
+    res.json({
+      success: true,
+      data: enriched
+    });
+  } catch (err) {
+    console.error('Error loading finance schedules:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'SERVER_ERROR',
+        message: err.message || 'Failed to load finance schedules'
+      }
+    });
+  }
 });
 
 // POST create schedule
-router.post('/schedules', (req, res) => {
+router.post('/schedules', async (req, res) => {
   try {
     const {
       policy_id,
@@ -259,7 +334,8 @@ router.post('/schedules', (req, res) => {
       currency,
       type_of_business, // "Direct" / "Non Direct" from frontend
       commission_gross,
-      commission_to_source
+      commission_to_source,
+      external_invoice_number
     } = req.body;
 
     if (!policy_id) {
@@ -270,8 +346,11 @@ router.post('/schedules', (req, res) => {
     }
 
     // Optional: Prevent duplicate schedule for same policy
-    const existing = schedules.find((s) => s.policy_id === policy_id);
-    if (existing) {
+    const existingCheck = await db.query(
+      'SELECT id FROM finance_schedules WHERE policy_id = $1',
+      [policy_id]
+    );
+    if (existingCheck.rows.length > 0) {
       return res.status(400).json({
         success: false,
         error: {
@@ -281,41 +360,90 @@ router.post('/schedules', (req, res) => {
       });
     }
 
+    // Generate internal invoice number
+    const internalInvoiceNumber = await generateInvoiceNumber({ createdDate: new Date() });
+
     const normalizedType = normalizeBusinessType(type_of_business);
     const installments = buildInstallmentsFromBody(
       req.body,
       normalizedType
     );
 
-    const now = new Date();
+    // Create finance schedule in database
+    const scheduleSql = `
+      INSERT INTO finance_schedules (
+        policy_id,
+        client_id,
+        insurance_id,
+        source_business_id,
+        currency,
+        type_of_business,
+        commission_gross,
+        commission_to_source,
+        internal_invoice_number,
+        external_invoice_number,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+      RETURNING id, policy_id, client_id, insurance_id, source_business_id,
+                currency, type_of_business, commission_gross, commission_to_source,
+                internal_invoice_number, external_invoice_number, created_at, updated_at
+    `;
 
-    const schedule = {
-      id: nextScheduleId++,
+    const scheduleParams = [
       policy_id,
-      client_id: client_id || null,
-      insurance_id: insurance_id || null,
-      source_business_id: source_business_id || null,
-      currency: currency || 'IDR',
+      client_id || null,
+      insurance_id || null,
+      source_business_id || null,
+      currency || 'IDR',
+      normalizedType,
+      commission_gross != null ? Number(commission_gross) : null,
+      commission_to_source != null ? Number(commission_to_source) : null,
+      internalInvoiceNumber,
+      external_invoice_number || null
+    ];
 
-      type_of_business: normalizedType, // DIRECT / NON_DIRECT
+    const { rows } = await db.query(scheduleSql, scheduleParams);
+    const schedule = rows[0];
 
-      commission_gross: commission_gross != null ? Number(commission_gross) : null,
-      commission_to_source:
-        commission_to_source != null ? Number(commission_to_source) : null,
+    // Create installments and entries in database
+    for (const inst of installments) {
+      const instSql = `
+        INSERT INTO finance_installments (schedule_id, installment_number)
+        VALUES ($1, $2)
+        RETURNING id
+      `;
+      const instResult = await db.query(instSql, [schedule.id, inst.installment]);
+      const installmentId = instResult.rows[0].id;
 
-      installments,
+      for (const entry of inst.entries) {
+        const entrySql = `
+          INSERT INTO finance_entries (
+            installment_id, description, due_date, amount, status, paid_date
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `;
+        await db.query(entrySql, [
+          installmentId,
+          entry.description,
+          entry.due_date,
+          entry.amount,
+          entry.status,
+          entry.paid_date
+        ]);
+      }
+    }
 
-      created_at: now,
-      updated_at: now
+    const enriched = {
+      ...schedule,
+      installments
     };
-
-    schedules.push(schedule);
-
-    const enriched = computeSummary(schedule);
 
     res.status(201).json({
       success: true,
-      data: enriched
+      data: enriched,
+      message: `Finance schedule created with invoice number: ${internalInvoiceNumber}`
     });
   } catch (err) {
     console.error('Error creating finance schedule:', err);
