@@ -56,6 +56,12 @@ function Finance() {
   const [installmentsDraft, setInstallmentsDraft] = useState([]); // [{ installment, entries: [] }]
   const [externalInvoiceNumber, setExternalInvoiceNumber] = useState(''); // External invoice reference
 
+  // Payment update modal state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [currentPaymentEntry, setCurrentPaymentEntry] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState('');
+
   useEffect(() => {
     loadAll();
   }, []);
@@ -697,6 +703,131 @@ function Finance() {
     updateSingleEntryOnServer(row, { paid_date: newDate || null });
   };
 
+  // ============ PAYMENT & RECEIPT HANDLERS ============
+
+  const openPaymentModal = (row) => {
+    setCurrentPaymentEntry(row);
+    setPaymentAmount(row.entry.paid_amount || '');
+    setPaymentDate(row.entry.paid_date || todayISO());
+    setShowPaymentModal(true);
+    setError('');
+    setSuccess('');
+  };
+
+  const closePaymentModal = () => {
+    setShowPaymentModal(false);
+    setCurrentPaymentEntry(null);
+    setPaymentAmount('');
+    setPaymentDate('');
+    setError('');
+  };
+
+  const handlePaymentUpdate = async (e) => {
+    e.preventDefault();
+    if (!currentPaymentEntry) return;
+
+    try {
+      setLoading(true);
+      setError('');
+      setSuccess('');
+
+      const entryId = currentPaymentEntry.entry.id;
+      const totalAmount = Number(currentPaymentEntry.entry.amount || 0);
+      const paidAmt = Number(paymentAmount || 0);
+
+      if (paidAmt < 0) {
+        setError('Paid amount cannot be negative.');
+        return;
+      }
+
+      if (paidAmt > totalAmount) {
+        setError(`Paid amount cannot exceed total amount (${formatMoney(totalAmount, currentPaymentEntry.currency)})`);
+        return;
+      }
+
+      const res = await api.put(`/finance/entries/${entryId}/payment`, {
+        paid_amount: paidAmt,
+        paid_date: paymentDate || null
+      });
+
+      if (res.data?.success) {
+        setSuccess('✅ Payment updated successfully.');
+        closePaymentModal();
+        await loadAll();
+      } else {
+        setError('Failed to update payment.');
+      }
+    } catch (err) {
+      setError(
+        'Error updating payment: ' +
+          (err.response?.data?.error?.message || err.message)
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReceiptUpload = async (row, file) => {
+    if (!file) return;
+
+    try {
+      setLoading(true);
+      setError('');
+      setSuccess('');
+
+      const entryId = row.entry.id;
+      const formData = new FormData();
+      formData.append('receipt', file);
+
+      const res = await api.post(`/finance/entries/${entryId}/receipt`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      if (res.data?.success) {
+        setSuccess('✅ Receipt uploaded successfully.');
+        await loadAll();
+      } else {
+        setError('Failed to upload receipt.');
+      }
+    } catch (err) {
+      setError(
+        'Error uploading receipt: ' +
+          (err.response?.data?.error?.message || err.message)
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReceiptDelete = async (row) => {
+    if (!window.confirm('Delete this receipt?')) return;
+
+    try {
+      setLoading(true);
+      setError('');
+      setSuccess('');
+
+      const entryId = row.entry.id;
+      const res = await api.delete(`/finance/entries/${entryId}/receipt`);
+
+      if (res.data?.success) {
+        setSuccess('✅ Receipt deleted successfully.');
+        await loadAll();
+      } else {
+        setError('Failed to delete receipt.');
+      }
+    } catch (err) {
+      setError(
+        'Error deleting receipt: ' +
+          (err.response?.data?.error?.message || err.message)
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ============ SORT HANDLERS (Schedules & Installments) ============
 
   const toggleScheduleSort = (field) => {
@@ -1248,6 +1379,7 @@ function Finance() {
                       <th>Status</th>
                       <th>Paid Date</th>
                       <th>Receipt</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1359,10 +1491,41 @@ function Finance() {
                                 >
                                   📄 View
                                 </a>
+                                <button
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => handleReceiptDelete(row)}
+                                  title="Delete receipt"
+                                >
+                                  🗑️
+                                </button>
                               </div>
                             ) : (
                               <small className="text-muted">No receipt</small>
                             )}
+                          </td>
+                          <td>
+                            <div className="d-flex flex-column gap-1">
+                              <button
+                                className="btn btn-sm btn-primary"
+                                onClick={() => openPaymentModal(row)}
+                                title="Update payment"
+                              >
+                                💰 Payment
+                              </button>
+                              <label className="btn btn-sm btn-success mb-0">
+                                📤 Upload
+                                <input
+                                  type="file"
+                                  accept="image/*,.pdf"
+                                  style={{ display: 'none' }}
+                                  onChange={(e) => {
+                                    if (e.target.files && e.target.files[0]) {
+                                      handleReceiptUpload(row, e.target.files[0]);
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1669,6 +1832,99 @@ function Finance() {
                   </button>
                 </form>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PAYMENT UPDATE MODAL */}
+      {showPaymentModal && currentPaymentEntry && (
+        <div
+          className="modal fade show d-block"
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}
+        >
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header bg-primary text-white">
+                <h5 className="modal-title">Update Payment</h5>
+                <button
+                  className="btn-close btn-close-white"
+                  onClick={closePaymentModal}
+                ></button>
+              </div>
+              <form onSubmit={handlePaymentUpdate}>
+                <div className="modal-body">
+                  <div className="alert alert-info">
+                    <div>
+                      <strong>Entry:</strong> {currentPaymentEntry.entry.description}
+                    </div>
+                    <div>
+                      <strong>Invoice:</strong> {currentPaymentEntry.entry.invoice_number || '-'}
+                    </div>
+                    <div>
+                      <strong>Total Amount:</strong>{' '}
+                      {formatMoney(currentPaymentEntry.entry.amount, currentPaymentEntry.currency)}
+                    </div>
+                    <div>
+                      <strong>Current Paid:</strong>{' '}
+                      {formatMoney(currentPaymentEntry.entry.paid_amount || 0, currentPaymentEntry.currency)}
+                    </div>
+                    <div>
+                      <strong>Outstanding:</strong>{' '}
+                      <span className="text-danger">
+                        {formatMoney(currentPaymentEntry.entry.outstanding || 0, currentPaymentEntry.currency)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="form-label">
+                      Paid Amount <span className="text-danger">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max={currentPaymentEntry.entry.amount}
+                      className="form-control"
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      required
+                    />
+                    <small className="text-muted">
+                      Maximum: {formatMoney(currentPaymentEntry.entry.amount, currentPaymentEntry.currency)}
+                    </small>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="form-label">
+                      Payment Date
+                    </label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={paymentDate}
+                      onChange={(e) => setPaymentDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={loading}
+                  >
+                    {loading ? 'Saving...' : '✅ Update Payment'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={closePaymentModal}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
