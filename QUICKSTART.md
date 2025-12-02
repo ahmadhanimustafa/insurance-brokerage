@@ -9,11 +9,11 @@ docker-compose down
 # 2. Build development images (first time only)
 ./dev.sh build
 
-# 3. Start development environment
+# 3. Start development environment (runs in background)
 ./dev.sh start
 ```
 
-**That's it!** Your app is now running with hot reload enabled.
+**That's it!** Your app is now running in the background with hot reload enabled.
 
 ## 🌐 Access Your App
 
@@ -25,26 +25,33 @@ docker-compose down
 ## 💻 Daily Development Workflow
 
 ```bash
-# Morning: Start your containers
+# Morning: Start your containers (detached mode)
 ./dev.sh start
+
+# View logs when needed
+./dev.sh logs
 
 # During the day: Just code! Changes auto-reload ✨
 # Edit files in:
 #   - frontend/src/
 #   - backend/src/
 
+# Check container status
+./dev.sh status
+
 # Evening: Stop containers
 ./dev.sh stop
-# Or just press Ctrl+C in the terminal
 ```
 
 ## 🔧 Common Commands
 
 ```bash
-./dev.sh start      # Start all services
+./dev.sh start      # Start all services (background/detached)
+./dev.sh up         # Start with logs (foreground)
 ./dev.sh stop       # Stop all services
 ./dev.sh restart    # Restart services
-./dev.sh logs       # View logs
+./dev.sh logs       # View logs (follow mode)
+./dev.sh status     # Check container status
 ./dev.sh clean      # Remove all containers & volumes
 ./dev.sh rebuild    # Full rebuild (rarely needed)
 ```
