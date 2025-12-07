@@ -24,8 +24,8 @@ function Login({ onLogin, theme }) {
       });
 
       if (response.data.success) {
-        setSuccess('✅ Login successful! Redirecting...');
-        
+        setSuccess('Login successful! Redirecting to dashboard...');
+
         // Extract token and user from response
         const token = response.data.data.token;
         const user = response.data.data.user;
@@ -41,13 +41,28 @@ function Login({ onLogin, theme }) {
         // Wait a bit for state to update, then redirect
         setTimeout(() => {
           window.location.href = '/';
-        }, 500);
+        }, 1000);
       } else {
-        setError('❌ Login failed: ' + (response.data.error?.message || 'Unknown error'));
+        setError(response.data.error?.message || 'Login failed. Please try again.');
       }
     } catch (err) {
-      const errorMsg = err.response?.data?.error?.message || err.message || 'Network error';
-      setError('❌ Login error: ' + errorMsg);
+      let errorMsg = 'Unable to connect to server. Please check your connection.';
+
+      if (err.response) {
+        // Server responded with error
+        if (err.response.status === 401) {
+          errorMsg = 'Invalid email or password. Please try again.';
+        } else if (err.response.data?.error?.message) {
+          errorMsg = err.response.data.error.message;
+        } else {
+          errorMsg = 'Login failed. Please try again later.';
+        }
+      } else if (err.request) {
+        // Request made but no response
+        errorMsg = 'Cannot reach server. Please check if the server is running.';
+      }
+
+      setError(errorMsg);
       console.error('Login error:', err);
     } finally {
       setLoading(false);
@@ -69,15 +84,28 @@ function Login({ onLogin, theme }) {
 
           {/* Error Alert */}
           {error && (
-            <div className="alert alert-danger mb-3">
+            <div className="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+              <strong>❌ Error!</strong>
+              <br />
               {error}
+              <button
+                type="button"
+                className="btn-close"
+                onClick={() => setError('')}
+                aria-label="Close"
+              ></button>
             </div>
           )}
 
           {/* Success Alert */}
           {success && (
-            <div className="alert alert-success mb-3">
+            <div className="alert alert-success alert-dismissible fade show mb-3" role="alert">
+              <strong>✅ Success!</strong>
+              <br />
               {success}
+              <div className="spinner-border spinner-border-sm ms-2" role="status">
+                <span className="visually-hidden">Loading...</span>
+              </div>
             </div>
           )}
 

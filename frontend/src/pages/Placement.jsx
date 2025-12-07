@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import api from "../services/api";
 import ReactQuill from "react-quill";
-//
+import "./Placement.css";
 
 
 // Helpers
@@ -1653,12 +1653,10 @@ function Placement() {
 
       {/* CLIENT MODAL */}
       {showClientModal && (
-        <div
-          className="modal fade show d-block"
-          style={{ zIndex: 1050 }}
-        >
+        <>
           <div className="modal-backdrop fade show"></div>
-          <div className="modal-dialog modal-xl">
+          <div className="modal fade show d-block" style={{ zIndex: 1050 }}>
+            <div className="modal-dialog modal-xl">
             <div className="modal-content">
               <div className="modal-header bg-primary text-white">
                 <h5 className="modal-title">
@@ -2096,13 +2094,16 @@ function Placement() {
                 </form>
               </div>
             </div>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* PROPOSAL MODAL */}
       {showProposalModal && (
-        <div className="modal fade show d-block" tabIndex="-1">
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <div className="modal fade show d-block" style={{ zIndex: 1050 }}>
           <div className="modal-dialog modal-lg modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header bg-primary text-white">
@@ -2391,12 +2392,15 @@ function Placement() {
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </>
       )}
 
       {/* POLICY MODAL */}
       {showPolicyModal && (
-        <div className="modal fade show d-block" tabIndex="-1">
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <div className="modal fade show d-block" style={{ zIndex: 1050 }}>
           <div className="modal-dialog modal-lg modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header bg-primary text-white">
@@ -3013,15 +3017,14 @@ function Placement() {
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </>
       )}
       {/* DOCUMENT PREVIEW MODAL */}
         {docPreviewVisible && docPreviewItem && (
-          <div
-            className="modal fade show d-block"
-            style={{ zIndex: 1100 }}
-          >
+          <>
             <div className="modal-backdrop fade show"></div>
+            <div className="modal fade show d-block" style={{ zIndex: 1100 }}>
             <div className="modal-dialog modal-xl modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header bg-dark text-white">
@@ -3106,7 +3109,8 @@ function Placement() {
                 </div>
               </div>
             </div>
-          </div>
+            </div>
+          </>
         )}
 
     </div>

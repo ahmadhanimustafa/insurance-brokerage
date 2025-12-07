@@ -290,7 +290,7 @@ ON CONFLICT (name) DO NOTHING;
 INSERT INTO users (email, password_hash, full_name, role_id, department_id)
 SELECT
     'admin@insurance.com',
-    '$2a$10$rT5qJHvGoLKPm3xJ3FNxsOX8P5aDh4jKQq7.hKqH5VJxKqGKqYqPe',
+    '$2a$10$fi9d2/MfjA8d9eMeHxvZC.sFIEYr1zV7bjjSbPc2P2EnEIJBrILwW',
     'Administrator',
     (SELECT id FROM roles WHERE name = 'Admin'),
     (SELECT id FROM departments WHERE name = 'Admin')

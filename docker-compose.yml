@@ -19,12 +19,13 @@ services:
     command: npm run dev
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: http://localhost:5001/api
     container_name: insurance_frontend
     ports:
       - "3000:80"
-    environment:
-      - REACT_APP_API_URL=http://localhost:5001
     depends_on:
       - backend
 
