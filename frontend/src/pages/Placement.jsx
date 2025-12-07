@@ -1655,8 +1655,9 @@ function Placement() {
       {showClientModal && (
         <div
           className="modal fade show d-block"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1050 }}
+          style={{ zIndex: 1050 }}
         >
+          <div className="modal-backdrop fade show"></div>
           <div className="modal-dialog modal-xl">
             <div className="modal-content">
               <div className="modal-header bg-primary text-white">
@@ -3018,8 +3019,9 @@ function Placement() {
         {docPreviewVisible && docPreviewItem && (
           <div
             className="modal fade show d-block"
-            style={{ backgroundColor: "rgba(0,0,0,0.5)", zIndex: 1100 }}
+            style={{ zIndex: 1100 }}
           >
+            <div className="modal-backdrop fade show"></div>
             <div className="modal-dialog modal-xl modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header bg-dark text-white">

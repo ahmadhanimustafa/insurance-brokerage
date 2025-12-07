@@ -1633,8 +1633,8 @@ function Finance() {
                 <form onSubmit={handleSaveModal}>
                   {modalMode === 'create' && currentPolicy && (
                     <>
-                      <fieldset className="border p-3 mb-3" style={{ backgroundColor: '#fff3cd', borderColor: '#ffc107', borderWidth: '2px' }}>
-                        <legend className="w-auto px-2" style={{ color: '#856404', fontWeight: 'bold' }}>
+                      <fieldset className="border p-3 mb-3 bg-warning bg-opacity-10" style={{ borderWidth: '2px' }}>
+                        <legend className="w-auto px-2 text-warning fw-bold">
                           📋 Reference Numbers
                         </legend>
                         <div className="row">
@@ -1644,8 +1644,8 @@ function Finance() {
                             </label>
                             <input
                               type="text"
-                              className="form-control form-control-lg"
-                              style={{ borderColor: '#0d6efd', borderWidth: '2px' }}
+                              className="form-control form-control-lg border-primary"
+                              style={{ borderWidth: '2px' }}
                               placeholder="Internal reference number"
                               value={internalReferenceNumber}
                               onChange={(e) => setInternalReferenceNumber(e.target.value)}
@@ -1660,8 +1660,8 @@ function Finance() {
                             </label>
                             <input
                               type="text"
-                              className="form-control form-control-lg"
-                              style={{ borderColor: '#198754', borderWidth: '2px' }}
+                              className="form-control form-control-lg border-success"
+                              style={{ borderWidth: '2px' }}
                               placeholder="External reference number"
                               value={externalInvoiceNumber}
                               onChange={(e) => setExternalInvoiceNumber(e.target.value)}
@@ -1671,7 +1671,7 @@ function Finance() {
                             </small>
                           </div>
                         </div>
-                        <div className="alert alert-info mb-0" style={{ backgroundColor: '#cfe2ff', borderColor: '#b6d4fe' }}>
+                        <div className="alert alert-info mb-0">
                           <small>
                             <strong>Note:</strong> Both fields are optional. Internal reference is for your company's tracking.
                             External reference is for references from insurance companies or other partners.
@@ -1679,8 +1679,8 @@ function Finance() {
                         </div>
                       </fieldset>
 
-                      <fieldset className="border p-3 mb-3" style={{ backgroundColor: '#d1ecf1', borderColor: '#17a2b8', borderWidth: '2px' }}>
-                        <legend className="w-auto px-2" style={{ color: '#0c5460', fontWeight: 'bold' }}>
+                      <fieldset className="border p-3 mb-3 bg-info bg-opacity-10 border-info" style={{ borderWidth: '2px' }}>
+                        <legend className="w-auto px-2 text-info fw-bold">
                           💰 Stamp Duty
                         </legend>
                         <div className="row">
@@ -1692,8 +1692,8 @@ function Finance() {
                               type="number"
                               step="0.01"
                               min="0"
-                              className="form-control form-control-lg"
-                              style={{ borderColor: '#17a2b8', borderWidth: '2px' }}
+                              className="form-control form-control-lg border-info"
+                              style={{ borderWidth: '2px' }}
                               placeholder="0.00"
                               value={stampDuty}
                               onChange={(e) => setStampDuty(e.target.value)}

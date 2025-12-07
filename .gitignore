@@ -37,3 +37,6 @@ logs/
 # Uploads
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Ignore docker-compose override file
+docker-compose.override.yml

@@ -14,6 +14,7 @@ import Dashboard from './pages/Dashboard';
 import Placement from './pages/Placement';
 import ProtectedRoute from './components/ProtectedRoute';
 import Finance from './pages/Finance';
+import Admin from './pages/Admin';
 //import Proposal from './pages/Proposal';
 
 function App() {
@@ -132,9 +133,16 @@ function App() {
                   </li>
                   <li className="nav-item">
                     <a className={`nav-link ${theme === 'dark' ? 'text-light' : 'text-dark'}`} href="/finance">
-                      💸 FInance
+                      💸 Finance
                     </a>
                   </li>
+                  {user?.role === 'Admin' && (
+                    <li className="nav-item">
+                      <a className={`nav-link ${theme === 'dark' ? 'text-light' : 'text-dark'}`} href="/admin">
+                        👥 Admin
+                      </a>
+                    </li>
+                  )}
                   <li className="nav-item">
                     <button 
                       className="btn btn-sm btn-outline-secondary ms-2"
@@ -202,16 +210,29 @@ function App() {
               />
               
                { /* Finance route */ }
-              <Route 
-                path="/finance" 
+              <Route
+                path="/finance"
                 element={
                   isAuthenticated ? (
                     <Finance/>
                   ) : (
                     <Navigate to="/login" replace />
                   )
-                } 
+                }
               />
+
+              {/* Admin route - Only for Admin role */}
+              <Route
+                path="/admin"
+                element={
+                  isAuthenticated && user?.role === 'Admin' ? (
+                    <Admin/>
+                  ) : (
+                    <Navigate to="/" replace />
+                  )
+                }
+              />
+
               {/* Catch all - redirect to login or dashboard */}
               <Route 
                 path="*" 

@@ -55,35 +55,28 @@ function Login({ onLogin, theme }) {
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      minHeight: '100vh',
-      backgroundColor: theme === 'dark' ? '#212529' : '#ffffff',
-      color: theme === 'dark' ? '#ffffff' : '#000000'
-    }}>
+    <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '100vh' }}>
       <div className="card" style={{ width: '100%', maxWidth: '400px' }}>
-        <div className="card-body" style={{ padding: '40px' }}>
+        <div className="card-body p-4">
           {/* Header */}
-          <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-            <h1 style={{ fontSize: '48px', marginBottom: '10px' }}>🏢</h1>
-            <h2 style={{ marginBottom: '5px' }}>Insurance Brokerage</h2>
-            <p style={{ opacity: 0.7, fontSize: '14px', marginBottom: 0 }}>
+          <div className="text-center mb-4">
+            <h1 className="mb-2" style={{ fontSize: '48px' }}>🏢</h1>
+            <h2 className="mb-1">Insurance Brokerage</h2>
+            <p className="text-muted mb-0" style={{ fontSize: '14px' }}>
               Admin Portal
             </p>
           </div>
 
           {/* Error Alert */}
           {error && (
-            <div className="alert alert-danger" style={{ marginBottom: '20px' }}>
+            <div className="alert alert-danger mb-3">
               {error}
             </div>
           )}
 
           {/* Success Alert */}
           {success && (
-            <div className="alert alert-success" style={{ marginBottom: '20px' }}>
+            <div className="alert alert-success mb-3">
               {success}
             </div>
           )}
@@ -92,7 +85,7 @@ function Login({ onLogin, theme }) {
           <form onSubmit={handleSubmit}>
             {/* Email Input */}
             <div className="mb-3">
-              <label className="form-label" style={{ fontWeight: '500' }}>
+              <label className="form-label fw-medium">
                 📧 Email Address
               </label>
               <input
@@ -108,7 +101,7 @@ function Login({ onLogin, theme }) {
 
             {/* Password Input */}
             <div className="mb-3">
-              <label className="form-label" style={{ fontWeight: '500' }}>
+              <label className="form-label fw-medium">
                 🔑 Password
               </label>
               <input
@@ -138,16 +131,15 @@ function Login({ onLogin, theme }) {
             {/* Submit Button */}
             <button
               type="submit"
-              className="btn btn-primary w-100"
+              className="btn btn-primary w-100 mb-3"
               disabled={loading}
-              style={{ marginBottom: '15px' }}
             >
               {loading ? '⏳ Logging in...' : '🔓 Login'}
             </button>
           </form>
 
           {/* Demo Credentials */}
-          <div className="alert alert-info" style={{ marginTop: '20px', marginBottom: 0, fontSize: '12px' }}>
+          <div className="alert alert-info mb-0" style={{ fontSize: '12px' }}>
             <strong>Demo Credentials:</strong>
             <br />
             📧 Email: <code>admin@insurance.com</code>

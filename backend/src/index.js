@@ -29,6 +29,7 @@ app.get('/health', (req, res) => {
 
 // Routes - ALL MUST BE PRESENT
 app.use('/api/auth', require('./routes/auth'));           // ✅ Login
+app.use('/api/users', require('./routes/users'));         // ✅ User Management
 app.use('/api/placement', require('./routes/placement')); // ✅ Clients, Policies, Documents
 app.use('/api/finance', require('./routes/finance'));     // ✅ Finance Module
 app.use('/api/endorsement', require('./routes/endorsement')); // ✅ Endorsement Module
